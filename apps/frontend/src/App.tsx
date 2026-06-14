@@ -1,22 +1,39 @@
 import "styles/globals.css"
+import { Landing } from "./components/Landing";
+import { Login } from "./components/Login";
 import { Form } from "./components/Form";
-import { useState } from "react";
 import { Interview } from "./components/Interview";
 import { Result } from "./components/Result";
 import { Toaster } from "sonner";
-import { BrowserRouter, Routes, Route } from "react-router";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router";
+import { AuthProvider, useAuth } from "@/lib/auth";
+
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { token, loading } = useAuth();
+  if (loading) return null;
+  if (!token) return <Navigate to="/login" replace />;
+  return <>{children}</>;
+}
 
 export function App() {
-  const [page, setPage] = useState<"form" | "interview" | "result">("form");
-
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Form />} />
-        <Route path="/interview/:interviewId" element={<Interview />} />
-        <Route path="/result/:interviewId" element={<Result />} />
-      </Routes>
-      <Toaster position="bottom-left" />
+      <AuthProvider>
+        <Routes>
+          <Route path="/" element={<Landing />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/interview" element={
+            <ProtectedRoute><Form /></ProtectedRoute>
+          } />
+          <Route path="/interview/:interviewId" element={
+            <ProtectedRoute><Interview /></ProtectedRoute>
+          } />
+          <Route path="/result/:interviewId" element={
+            <ProtectedRoute><Result /></ProtectedRoute>
+          } />
+        </Routes>
+        <Toaster position="bottom-left" />
+      </AuthProvider>
     </BrowserRouter>
   );
 }

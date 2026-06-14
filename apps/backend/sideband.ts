@@ -1,4 +1,4 @@
-import { prisma } from "./db";
+import { prisma, withDb } from "./db";
 import { GROQ_API_KEY } from "./env";
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -7,10 +7,12 @@ const GROQ_MODEL = "llama-3.3-70b-versatile";
 export async function getGroqChatCompletion(
   interviewId: string,
 ): Promise<string> {
-  const interview = await prisma.interview.findFirst({
-    where: { id: interviewId },
-    include: { conversations: { orderBy: { createdAt: "asc" } } },
-  });
+  const interview = await withDb(() =>
+    prisma.interview.findFirst({
+      where: { id: interviewId },
+      include: { conversations: { orderBy: { createdAt: "asc" } } },
+    })
+  );
   if (!interview) throw new Error("Interview not found");
 
   const systemMessage = {
@@ -66,9 +68,11 @@ CRITICAL RULES - FOLLOW THESE EXACTLY:
   const content = data.choices?.[0]?.message?.content;
   if (!content) throw new Error("Empty response from Groq");
 
-  await prisma.message.create({
-    data: { interviewId, type: "Assistant", message: content },
-  });
+  await withDb(() =>
+    prisma.message.create({
+      data: { interviewId, type: "Assistant", message: content },
+    })
+  );
 
   return content;
 }

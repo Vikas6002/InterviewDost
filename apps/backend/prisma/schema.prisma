@@ -12,13 +12,34 @@ datasource db {
   provider = "postgresql"
 }
 
+model User {
+  id            String      @id @default(uuid())
+  githubId      String      @unique
+  username      String
+  avatarUrl     String?
+  createdAt     DateTime    @default(now())
+  interviews    Interview[]
+  sessions      Session[]
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  token     String   @unique @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+}
+
 model Interview {
-  id                String     @id @default(uuid())
-  githubMetadata    Json
-  status            InterviewStatus
-  score             Int       @default(0)
-  conversations     Message[]
-  feedback          String?
+  id              String     @id @default(uuid())
+  userId          String
+  user            User       @relation(fields: [userId], references: [id])
+  githubMetadata  Json
+  status          InterviewStatus
+  score           Int       @default(0)
+  conversations   Message[]
+  feedback        String?
 }
 
 model Message {

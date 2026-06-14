@@ -97,26 +97,27 @@ export function Interview() {
       audioCtxRef.current = audioCtx;
       const userMeter = createLevelMeter(audioCtx, ms);
 
-      const configRes = await fetch(`${BACKEND_URL}/api/v1/config`);
-      const config = await configRes.json();
-      const deepgramKey = config.deepgramApiKey || "";
-
-      const dgWs = new WebSocket("wss://api.deepgram.com/v1/listen", [
-        "token",
-        deepgramKey,
-      ]);
+      const wsUrl = BACKEND_URL.replace(/^http/, "ws");
+      const dgWs = new WebSocket(`${wsUrl}/api/v1/stt`);
       deepgramWsRef.current = dgWs;
 
-      dgWs.onopen = () => {
-        const mediaRecorder = new MediaRecorder(ms, { mimeType: "audio/webm" });
-        recorderRef.current = mediaRecorder;
-        mediaRecorder.start(250);
-        mediaRecorder.addEventListener("dataavailable", (event) => {
-          if (dgWs.readyState === WebSocket.OPEN) dgWs.send(event.data);
-        });
+      let sttReady = false;
+      dgWs.onmessage = (firstMsg) => {
+        const parsed = JSON.parse(firstMsg.data);
+        if (parsed.type === "connected") {
+          sttReady = true;
+          dgWs.onmessage = handleSttMessage;
+
+          const mediaRecorder = new MediaRecorder(ms, { mimeType: "audio/webm" });
+          recorderRef.current = mediaRecorder;
+          mediaRecorder.start(250);
+          mediaRecorder.addEventListener("dataavailable", (event) => {
+            if (dgWs.readyState === WebSocket.OPEN) dgWs.send(event.data);
+          });
+        }
       };
 
-      dgWs.onmessage = (message) => {
+      function handleSttMessage(message: MessageEvent) {
         const received = JSON.parse(message.data);
         const transcript = received.channel?.alternatives[0]?.transcript;
         if (transcript && received.speech_final && !processingRef.current) {
@@ -125,11 +126,11 @@ export function Interview() {
             JSON.stringify({ type: "user_message", text: transcript })
           );
         }
-      };
+      }
 
-      const wsUrl = BACKEND_URL.replace(/^http/, "ws");
+      const backendWsUrl = BACKEND_URL.replace(/^http/, "ws");
       const bWs = new WebSocket(
-        `${wsUrl}/api/v1/ws?interviewId=${interviewId}`
+        `${backendWsUrl}/api/v1/ws?interviewId=${interviewId}`
       );
       backendWsRef.current = bWs;
 

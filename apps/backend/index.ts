@@ -2,31 +2,85 @@ import express from "express";
 import { PreInterviewBody } from "./types";
 import { scrapeGithub } from "./scrapers/github";
 import cors from "cors";
-import { prisma } from "./db";
+import { prisma, withDb } from "./db";
 import { getGroqChatCompletion } from "./sideband";
 import { calculateResult } from "./result";
 import { DEEPGRAM_API_KEY } from "./env";
 import http from "http";
-import { WebSocketServer } from "ws";
+import { WebSocketServer, WebSocket as WsWebSocket } from "ws";
+import { authRouter } from "./auth";
 
 const app = express();
 app.use(express.json());
 app.use(cors());
+app.use("/api/v1/auth", authRouter);
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 
+async function getUserFromToken(token: string | undefined) {
+  if (!token) return null;
+  const session = await withDb(() =>
+    prisma.session.findUnique({
+      where: { token },
+      include: { user: true },
+    })
+  );
+  if (!session || session.expiresAt < new Date()) return null;
+  return session.user;
+}
+
 server.on("upgrade", (request, socket, head) => {
   const url = new URL(request.url!, `http://${request.headers.host}`);
+
   if (url.pathname === "/api/v1/ws") {
     wss.handleUpgrade(request, socket, head, (ws) => {
       ws.on("error", () => {});
       (ws as any).interviewId = url.searchParams.get("interviewId");
       wss.emit("connection", ws, request);
     });
-  } else {
-    socket.destroy();
+    return;
   }
+
+  if (url.pathname === "/api/v1/stt") {
+    wss.handleUpgrade(request, socket, head, (clientWs) => {
+      clientWs.on("error", () => {});
+
+      const dgWs = new WsWebSocket("wss://api.deepgram.com/v1/listen", {
+        headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` },
+      });
+
+      dgWs.on("open", () => {
+        dgWs.send(JSON.stringify({ type: "Settings", configuration: { encoding: "linear16", sample_rate: 16000, channels: 1 } }));
+        clientWs.send(JSON.stringify({ type: "connected" }));
+      });
+
+      dgWs.on("message", (data) => {
+        if (clientWs.readyState === WsWebSocket.OPEN) {
+          clientWs.send(data);
+        }
+      });
+
+      dgWs.on("error", () => {});
+
+      dgWs.on("close", () => {
+        if (clientWs.readyState === WsWebSocket.OPEN) clientWs.close();
+      });
+
+      clientWs.on("message", (data) => {
+        if (dgWs.readyState === WsWebSocket.OPEN) {
+          dgWs.send(data);
+        }
+      });
+
+      clientWs.on("close", () => {
+        if (dgWs.readyState === WsWebSocket.OPEN) dgWs.close();
+      });
+    });
+    return;
+  }
+
+  socket.destroy();
 });
 
 wss.on("connection", async (ws) => {
@@ -36,7 +90,7 @@ wss.on("connection", async (ws) => {
     return;
   }
 
-  const messages = await prisma.message.findMany({ where: { interviewId } });
+  const messages = await withDb(() => prisma.message.findMany({ where: { interviewId } }));
   if (messages.length === 0) {
     try {
       const greeting = await getGroqChatCompletion(interviewId);
@@ -51,9 +105,11 @@ wss.on("connection", async (ws) => {
     try {
       const msg = JSON.parse(data.toString());
       if (msg.type === "user_message" && msg.text?.trim()) {
-        await prisma.message.create({
-          data: { interviewId, type: "User", message: msg.text },
-        });
+        await withDb(() =>
+          prisma.message.create({
+            data: { interviewId, type: "User", message: msg.text },
+          })
+        );
         const aiText = await getGroqChatCompletion(interviewId);
         ws.send(JSON.stringify({ type: "ai_message", text: aiText }));
       }
@@ -98,17 +154,17 @@ app.post("/api/v1/tts", async (req, res) => {
   }
 });
 
-app.get("/api/v1/config", async (_req, res) => {
-  res.json({ deepgramApiKey: DEEPGRAM_API_KEY });
-});
-
 app.post("/api/v1/pre-interview", async (req, res) => {
-  const { success, data } = PreInterviewBody.safeParse(req.body);
+  const token = req.headers.authorization?.replace("Bearer ", "");
+  const user = await getUserFromToken(token);
+  if (!user) {
+    res.status(401).json({ error: "Authentication required" });
+    return;
+  }
 
+  const { success, data } = PreInterviewBody.safeParse(req.body);
   if (!success) {
-    res.status(411).json({
-      message: "Incorrect body",
-    });
+    res.status(411).json({ message: "Incorrect body" });
     return;
   }
 
@@ -116,50 +172,36 @@ app.post("/api/v1/pre-interview", async (req, res) => {
   const githubUsername = githubUrl.split("/").pop()!;
   const githubData = await scrapeGithub(githubUsername);
 
-  const interview = await prisma.interview.create({
-    data: {
-      githubMetadata: JSON.stringify(githubData),
-      status: "Pre",
-    },
-  });
+  const interview = await withDb(() =>
+    prisma.interview.create({
+      data: {
+        userId: user.id,
+        githubMetadata: JSON.stringify(githubData),
+        status: "Pre",
+      },
+    })
+  );
 
   res.json({ id: interview.id });
 });
 
-app.post("/api/v1/session/user/response/:interviewId", async (req, res) => {
-  const { message } = req.body;
-  await prisma.message.create({
-    data: {
-      interviewId: req.params.interviewId!,
-      type: "User",
-      message: message,
-    },
-  });
-
-  res.json({ message: "Message saved" });
-});
-
 app.get("/api/v1/result/:interviewId", async (req, res) => {
-  const interview = await prisma.interview.findFirst({
-    where: {
-      id: req.params.interviewId,
-    },
-    include: {
-      conversations: true,
-    },
-  });
+  const interview = await withDb(() =>
+    prisma.interview.findFirst({
+      where: { id: req.params.interviewId },
+      include: { conversations: true },
+    })
+  );
 
   if (!interview) {
-    res.status(411).json({
-      message: "Interview not found",
-    });
+    res.status(411).json({ message: "Interview not found" });
     return;
   }
 
   res.json({
-    score: interview?.score,
-    feedback: interview?.feedback,
-    transcript: interview?.conversations.map((c: { type: string; message: string; createdAt: Date }) => ({
+    score: interview.score,
+    feedback: interview.feedback,
+    transcript: interview.conversations.map((c) => ({
       type: c.type,
       content: c.message,
       createdAt: c.createdAt,
@@ -167,19 +209,14 @@ app.get("/api/v1/result/:interviewId", async (req, res) => {
     status: interview.status,
   });
 
-  if (interview.status != "Done") {
+  if (interview.status !== "Done") {
     const result = await calculateResult(interview.conversations);
-
-    await prisma.interview.update({
-      where: {
-        id: req.params.interviewId,
-      },
-      data: {
-        status: "Done",
-        feedback: result.feedback,
-        score: result.score,
-      },
-    });
+    await withDb(() =>
+      prisma.interview.update({
+        where: { id: req.params.interviewId },
+        data: { status: "Done", feedback: result.feedback, score: result.score },
+      })
+    );
   }
 });
 

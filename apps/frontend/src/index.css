@@ -1,8 +1,9 @@
 @import "../styles/globals.css";
+@import "sheryjs/dist/Shery.css";
 
 @layer base {
   :root {
-    @apply font-sans;
+    font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
   }
 
   html,

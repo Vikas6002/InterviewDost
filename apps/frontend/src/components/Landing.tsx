@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 
 import Shery from "sheryjs/dist/Shery.js";
+import { StarsBackground } from "./ui/stars-background";
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -154,10 +155,7 @@ function Navbar({ user, scrolled, onLogin, onDashboard }: {
 function Hero({ user, onLogin, onDashboard }: { user: any; onLogin: () => void; onDashboard: () => void }) {
   return (
     <section className="relative flex min-h-screen flex-col items-center justify-center px-6 pt-28 pb-16 text-center">
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute top-1/4 left-1/2 h-[600px] w-[600px] -translate-x-1/2 rounded-full bg-emerald-500/[0.04] blur-[160px]" />
-        <div className="absolute bottom-1/3 right-1/4 h-[400px] w-[400px] rounded-full bg-blue-500/[0.03] blur-[120px]" />
-      </div>
+      <StarsBackground />
 
       <div className="relative mx-auto max-w-5xl">
         <motion.div
@@ -181,7 +179,7 @@ function Hero({ user, onLogin, onDashboard }: { user: any; onLogin: () => void; 
         >
           <span className="text-white">{siteConfig.hero.title[0]}</span>
           <br />
-          <span className="font-['Instrument_Serif'] italic bg-gradient-to-r from-white/90 via-white/50 to-white/20 bg-clip-text text-transparent">
+          <span className="font-['Instrument_Serif'] italic bg-gradient-to-r from-white/90 via-white/50 to-white/20 bg-clip-text text-transparent px-4">
             {siteConfig.hero.title[1]}
           </span>
         </motion.h1>
@@ -232,7 +230,7 @@ function Features() {
     <section className="border-t border-white/[0.06] px-6 py-24 md:py-32">
       <div className="mx-auto max-w-6xl">
         <div className="mx-auto max-w-xl text-center">
-          <h2 className="shery-text text-2xl font-bold text-white sm:text-3xl">Everything you need to prepare</h2>
+          <h2 className="shery-text text-2xl font-bold text-white sm:text-3xl font-['Instrument_Serif'] italic">Everything you need to prepare</h2>
           <p className="mt-3 text-sm text-white/30">No signup forms, no scheduling — just your GitHub profile and a microphone.</p>
         </div>
         <div ref={ref} className="mt-16 grid gap-px overflow-hidden border border-white/[0.06] bg-white/[0.06] sm:grid-cols-2 lg:grid-cols-3">
@@ -259,7 +257,7 @@ function Steps() {
     <section className="border-t border-white/[0.06] px-6 py-24 md:py-32">
       <div className="mx-auto max-w-5xl">
         <div className="mx-auto max-w-xl text-center">
-          <h2 className="shery-text text-2xl font-bold text-white sm:text-3xl">How it works</h2>
+          <h2 className="shery-text text-2xl font-bold text-white sm:text-3xl font-['Instrument_Serif'] italic">How it works</h2>
           <p className="mt-3 text-sm text-white/30">From zero to your first interview in under a minute.</p>
         </div>
         <div ref={ref} className="mt-16 grid gap-12 md:grid-cols-3">
@@ -312,7 +310,7 @@ function Testimonials() {
     <section className="border-t border-white/[0.06] px-6 py-24 md:py-32">
       <div className="mx-auto max-w-6xl">
         <div className="mx-auto max-w-xl text-center">
-          <h2 className="shery-text text-2xl font-bold text-white sm:text-3xl">Trusted by engineers</h2>
+          <h2 className="shery-text text-2xl font-bold text-white sm:text-3xl font-['Instrument_Serif'] italic">Trusted by engineers</h2>
           <p className="mt-3 text-sm text-white/30">Join hundreds who've used InterviewDost to prepare.</p>
         </div>
         <div ref={ref} className="mt-16 grid gap-6 md:grid-cols-3">
@@ -344,7 +342,7 @@ function FAQ() {
     <section className="border-t border-white/[0.06] px-6 py-24 md:py-32">
       <div className="mx-auto max-w-2xl">
         <div className="mx-auto max-w-xl text-center">
-          <h2 className="shery-text text-2xl font-bold text-white sm:text-3xl">FAQ</h2>
+          <h2 className="shery-text text-2xl font-bold text-white sm:text-3xl font-['Instrument_Serif'] italic">FAQ</h2>
           <p className="mt-3 text-sm text-white/30">Everything you need to know about {siteConfig.name}.</p>
         </div>
         <div ref={ref} className="mt-14 space-y-2">

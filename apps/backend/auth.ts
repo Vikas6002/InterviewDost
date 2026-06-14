@@ -1,27 +1,53 @@
 import { Router } from "express";
+import crypto from "crypto";
 import { prisma, withDb } from "./db";
 import { GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, FRONTEND_URL } from "./env";
+import rateLimit from "express-rate-limit";
 
 export const authRouter = Router();
 
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  message: { error: "Too many requests" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+authRouter.use(authLimiter);
+
+function generateToken(): string {
+  return crypto.randomBytes(48).toString("hex");
+}
+
 authRouter.get("/github", (_req, res) => {
-  const url = `https://github.com/login/oauth/authorize?client_id=${GITHUB_CLIENT_ID}&redirect_uri=${encodeURIComponent("http://localhost:3001/api/v1/auth/github/callback")}&scope=read:user`;
+  const state = generateToken();
+  const url = `https://github.com/login/oauth/authorize?client_id=${GITHUB_CLIENT_ID}&redirect_uri=${encodeURIComponent("http://localhost:3001/api/v1/auth/github/callback")}&scope=read:user&state=${state}`;
+  res.cookie("oauth_state", state, {
+    httpOnly: true,
+    sameSite: "lax",
+    maxAge: 10 * 60 * 1000,
+    secure: false,
+  });
   res.redirect(url);
 });
 
 authRouter.get("/github/callback", async (req, res) => {
-  const { code } = req.query;
+  const { code, state } = req.query;
   if (!code || typeof code !== "string") {
-    res.status(400).json({ error: "Missing code" });
+    res.status(400).json({ error: "Missing authorization code" });
+    return;
+  }
+
+  const cookieState = req.cookies?.oauth_state;
+  if (!cookieState && process.env.NODE_ENV === "production") {
+    res.status(400).json({ error: "Invalid state parameter" });
     return;
   }
 
   const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify({
       client_id: GITHUB_CLIENT_ID,
       client_secret: GITHUB_CLIENT_SECRET,
@@ -38,12 +64,21 @@ authRouter.get("/github/callback", async (req, res) => {
   const userRes = await fetch("https://api.github.com/user", {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
+  if (!userRes.ok) {
+    res.redirect(`${FRONTEND_URL}/login?error=github_api_failed`);
+    return;
+  }
   const githubUser = await userRes.json();
+
+  if (!githubUser.id || !githubUser.login) {
+    res.redirect(`${FRONTEND_URL}/login?error=invalid_github_response`);
+    return;
+  }
 
   let user = await withDb(() =>
     prisma.user.findUnique({
       where: { githubId: String(githubUser.id) },
-    })
+    }),
   );
 
   if (!user) {
@@ -51,10 +86,10 @@ authRouter.get("/github/callback", async (req, res) => {
       prisma.user.create({
         data: {
           githubId: String(githubUser.id),
-          username: githubUser.login,
-          avatarUrl: githubUser.avatar_url,
+          username: String(githubUser.login).slice(0, 100),
+          avatarUrl: githubUser.avatar_url ? String(githubUser.avatar_url).slice(0, 500) : "",
         },
-      })
+      }),
     );
   }
 
@@ -62,9 +97,10 @@ authRouter.get("/github/callback", async (req, res) => {
     prisma.session.create({
       data: {
         userId: user.id,
+        token: generateToken(),
         expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       },
-    })
+    }),
   );
 
   res.redirect(`${FRONTEND_URL}?token=${session.token}`);
@@ -76,17 +112,26 @@ authRouter.get("/me", async (req, res) => {
     res.status(401).json({ error: "No token" });
     return;
   }
+
   const session = await withDb(() =>
     prisma.session.findUnique({
       where: { token },
       include: { user: true },
-    })
+    }),
   );
+
   if (!session || session.expiresAt < new Date()) {
     res.status(401).json({ error: "Invalid or expired session" });
     return;
   }
-  res.json({ user: { id: session.user.id, username: session.user.username, avatarUrl: session.user.avatarUrl } });
+
+  res.json({
+    user: {
+      id: session.user.id,
+      username: session.user.username,
+      avatarUrl: session.user.avatarUrl,
+    },
+  });
 });
 
 authRouter.post("/logout", async (req, res) => {

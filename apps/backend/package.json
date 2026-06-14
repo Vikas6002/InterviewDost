@@ -5,6 +5,7 @@
   "private": true,
   "devDependencies": {
     "@types/bun": "latest",
+    "@types/cookie-parser": "^1.4.10",
     "@types/node": "^25.6.2",
     "@types/pg": "^8.20.0",
     "prisma": "^7.8.0"
@@ -19,9 +20,12 @@
     "@types/express": "^5.0.6",
     "@types/ws": "^8.18.1",
     "axios": "^1.16.0",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.5.2",
+    "helmet": "^8.2.0",
     "https-proxy-agent": "^9.0.0",
     "pg": "^8.20.0",
     "playwright": "^1.60.0",

@@ -49,7 +49,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.setItem("session_token", urlToken);
       window.history.replaceState({}, "", window.location.pathname);
       setToken(urlToken);
-      validateToken(urlToken);
+      validateToken(urlToken, true);
       navigate("/dashboard", { replace: true });
       return;
     }
@@ -57,15 +57,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const saved = localStorage.getItem("session_token");
     if (saved) {
       setToken(saved);
-      validateToken(saved);
+      validateToken(saved, false);
     } else {
       setLoading(false);
     }
   }, [navigate]);
 
-  async function validateToken(t: string) {
+  async function validateToken(t: string, isNew: boolean) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
+    const id = setTimeout(() => controller.abort(), 10000);
 
     try {
       const res = await fetch(`${BACKEND_URL}/api/v1/auth/me`, {
@@ -73,24 +73,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signal: controller.signal,
       });
 
+      if (res.status === 401) {
+        localStorage.removeItem("session_token");
+        setToken(null);
+        setUser(null);
+        setLoading(false);
+        return;
+      }
+
       if (!res.ok) {
-        throw new Error(`Auth check failed: ${res.status}`);
+        setLoading(false);
+        return;
       }
 
       const data = await res.json();
       if (data.user) {
         setUser(data.user);
-      } else {
-        localStorage.removeItem("session_token");
-        setToken(null);
       }
     } catch {
-      if (t === localStorage.getItem("session_token")) {
+      if (isNew) {
         localStorage.removeItem("session_token");
         setToken(null);
+        setUser(null);
       }
     } finally {
-      clearTimeout(timeout);
+      clearTimeout(id);
       setLoading(false);
     }
   }

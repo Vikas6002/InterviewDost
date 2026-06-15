@@ -1,17 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import axios from "axios";
 import { BACKEND_URL } from "@/lib/config";
 import { useAuth } from "@/lib/auth";
 import {
-  BarChart,
-  Bar,
+  AreaChart,
+  Area,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  Legend,
 } from "recharts";
 import {
   Card,
@@ -21,6 +20,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
   BrainCircuit,
   FileText,
@@ -30,6 +30,8 @@ import {
   TrendingUp,
   Calendar,
 } from "lucide-react";
+
+type FilterPeriod = "day" | "month" | "year";
 
 interface Stats {
   totalInterviews: number;
@@ -62,6 +64,7 @@ function CustomTooltip({ active, payload, label }: any) {
 export function DashboardHome() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [period, setPeriod] = useState<FilterPeriod>("month");
   const { token } = useAuth();
   const navigate = useNavigate();
 
@@ -74,6 +77,66 @@ export function DashboardHome() {
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [token]);
+
+  function computeChartValues() {
+    if (!stats) return [];
+    const now = Date.now();
+    const day = 86400000;
+
+    const filtered = stats.scoresOverTime.filter((s) => {
+      const t = new Date(s.date).getTime();
+      if (period === "day") return t >= now - day;
+      if (period === "month") return t >= now - 30 * day;
+      return t >= now - 365 * day;
+    });
+
+    if (period === "year") {
+      const grouped: Record<string, any> = {};
+      for (const item of filtered) {
+        const key = new Date(item.date).toLocaleString("en-US", { month: "short", year: "2-digit" });
+        if (!grouped[key]) grouped[key] = { date: key, count: 0 };
+        grouped[key][item.type] = (grouped[key][item.type] ?? 0) + item.score;
+        grouped[key].count++;
+      }
+      for (const g of Object.values(grouped) as any[]) {
+        if (g.GitHub !== undefined) g.GitHub = Math.round((g.GitHub / g.count) * 10) / 10;
+        if (g.Resume !== undefined) g.Resume = Math.round((g.Resume / g.count) * 10) / 10;
+      }
+      return Object.values(grouped);
+    }
+
+    if (period === "day") {
+      const grouped: Record<string, any> = {};
+      for (const item of filtered) {
+        const key = new Date(item.date).toLocaleString("en-US", { hour: "2-digit", hour12: false });
+        if (!grouped[key]) grouped[key] = { date: key, count: 0 };
+        grouped[key][item.type] = (grouped[key][item.type] ?? 0) + item.score;
+        grouped[key].count++;
+      }
+      for (const g of Object.values(grouped) as any[]) {
+        if (g.GitHub !== undefined) g.GitHub = Math.round((g.GitHub / g.count) * 10) / 10;
+        if (g.Resume !== undefined) g.Resume = Math.round((g.Resume / g.count) * 10) / 10;
+      }
+      return Object.values(grouped);
+    }
+
+    const grouped: Record<string, any> = {};
+    for (const item of filtered) {
+      const key = item.date.slice(0, 10);
+      if (!grouped[key]) grouped[key] = { date: key, count: 0 };
+      grouped[key][item.type] = (grouped[key][item.type] ?? 0) + item.score;
+      grouped[key].count++;
+    }
+    for (const g of Object.values(grouped) as any[]) {
+      if (g.GitHub !== undefined) g.GitHub = Math.round((g.GitHub / g.count) * 10) / 10;
+      if (g.Resume !== undefined) g.Resume = Math.round((g.Resume / g.count) * 10) / 10;
+    }
+    return Object.values(grouped).sort(
+      (a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime(),
+    );
+  }
+
+  const chartValues = useMemo(computeChartValues, [stats, period]);
 
   if (loading) {
     return (
@@ -94,21 +157,8 @@ export function DashboardHome() {
     );
   }
 
-  const chartData = stats.scoresOverTime.reduce<Record<string, any>>((acc, item) => {
-    if (!acc[item.date]) {
-      acc[item.date] = { date: item.date };
-    }
-    acc[item.date][item.type] = item.score;
-    return acc;
-  }, {});
-
-  const chartValues = Object.values(chartData).sort(
-    (a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime(),
-  );
-
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
@@ -128,7 +178,6 @@ export function DashboardHome() {
         </div>
       </div>
 
-      {/* Stat cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card className="rounded-none">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -180,7 +229,7 @@ export function DashboardHome() {
           <CardContent>
             <div className="text-2xl font-bold">
               {stats.scoresOverTime.filter(
-                (s) => s.date >= new Date(Date.now() - 30 * 86400000).toISOString().split("T")[0],
+                (s) => new Date(s.date).getTime() >= Date.now() - 30 * 86400000,
               ).length}
             </div>
             <p className="text-xs text-muted-foreground">
@@ -190,18 +239,51 @@ export function DashboardHome() {
         </Card>
       </div>
 
-      {/* Bar Chart */}
-      <Card className="rounded-none">
-        <CardHeader>
-          <CardTitle>Performance Trend</CardTitle>
-          <CardDescription>
-            Your interview scores over time, broken down by type.
-          </CardDescription>
+      <Card className="rounded-none overflow-hidden border-border/60">
+        <CardHeader className="pb-0">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-lg font-semibold tracking-tight">
+                Performance Trend
+              </CardTitle>
+              <CardDescription>
+                Your interview scores over time, broken down by type.
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="flex overflow-hidden rounded-md border border-border text-xs font-medium">
+                {(["day", "month", "year"] as const).map((p) => (
+                  <button
+                    key={p}
+                    onClick={() => setPeriod(p)}
+                    className={cn(
+                      "px-3 py-1.5 transition-colors",
+                      period === p
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-transparent text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {p === "day" ? "Today" : p === "month" ? "Month" : "Year"}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                <span className="flex items-center gap-1.5">
+                  <span className="size-2.5 rounded-full" style={{ backgroundColor: "var(--chart-1)" }} />
+                  GitHub
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="size-2.5 rounded-full" style={{ backgroundColor: "var(--chart-2)" }} />
+                  Resume
+                </span>
+              </div>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           {chartValues.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center">
-              <BarChart className="size-10 text-muted-foreground/40" />
+              <TrendingUp className="size-10 text-muted-foreground/40" />
               <p className="mt-3 text-sm font-medium text-muted-foreground">
                 No interview data yet
               </p>
@@ -210,58 +292,77 @@ export function DashboardHome() {
               </p>
             </div>
           ) : (
-            <div className="h-[350px] w-full">
+            <div className="h-[320px] w-full pt-4">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart
+                <AreaChart
                   data={chartValues}
                   margin={{ top: 8, right: 8, left: -16, bottom: 0 }}
                 >
+                  <defs>
+                    <linearGradient id="githubGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.25} />
+                      <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="resumeGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--chart-2)" stopOpacity={0.25} />
+                      <stop offset="100%" stopColor="var(--chart-2)" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid
-                    strokeDasharray="3 3"
+                    strokeDasharray="4 4"
                     stroke="var(--border)"
                     vertical={false}
+                    strokeOpacity={0.4}
                   />
                   <XAxis
                     dataKey="date"
                     tickLine={false}
                     axisLine={false}
-                    tickMargin={8}
-                    tick={{ fontSize: 12, fill: "var(--muted-foreground)" }}
+                    tickMargin={10}
+                    tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                    tickFormatter={(val) => {
+                      if (period === "month") {
+                        const d = new Date(val);
+                        return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+                      }
+                      if (period === "day") return val + ":00";
+                      return val;
+                    }}
                   />
                   <YAxis
                     domain={[0, 10]}
                     tickCount={6}
                     tickLine={false}
                     axisLine={false}
-                    tickMargin={8}
-                    tick={{ fontSize: 12, fill: "var(--muted-foreground)" }}
+                    tickMargin={10}
+                    tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
                   />
-                  <Tooltip content={<CustomTooltip />} cursor={{ fill: "var(--muted)", opacity: 0.3 }} />
-                  <Legend
-                    iconType="circle"
-                    iconSize={8}
-                    wrapperStyle={{ fontSize: 12, paddingTop: 12 }}
-                  />
-                  <Bar
+                  <Tooltip content={<CustomTooltip />} cursor={{ stroke: "var(--muted-foreground)", strokeDasharray: "4 4", strokeOpacity: 0.3 }} />
+                  <Area
+                    type="monotone"
                     dataKey="GitHub"
-                    fill={CHART_COLORS.GitHub}
-                    radius={[4, 4, 0, 0]}
-                    maxBarSize={48}
+                    stroke="var(--chart-1)"
+                    strokeWidth={2.5}
+                    fill="url(#githubGrad)"
+                    dot={{ fill: "var(--chart-1)", strokeWidth: 0, r: 4 }}
+                    activeDot={{ r: 6, strokeWidth: 0, fill: "var(--chart-1)" }}
                   />
-                  <Bar
+                  <Area
+                    type="monotone"
                     dataKey="Resume"
-                    fill={CHART_COLORS.Resume}
-                    radius={[4, 4, 0, 0]}
-                    maxBarSize={48}
+                    stroke="var(--chart-2)"
+                    strokeWidth={2.5}
+                    fill="url(#resumeGrad)"
+                    dot={{ fill: "var(--chart-2)", strokeWidth: 0, r: 4 }}
+                    activeDot={{ r: 6, strokeWidth: 0, fill: "var(--chart-2)" }}
                   />
-                </BarChart>
+                </AreaChart>
               </ResponsiveContainer>
             </div>
           )}
         </CardContent>
       </Card>
 
-      {/* Quick actions */}
       <div className="grid gap-4 sm:grid-cols-2">
         <Card className="rounded-none cursor-pointer transition-colors hover:bg-accent/50" onClick={() => navigate("/dashboard/github")}>
           <CardHeader>

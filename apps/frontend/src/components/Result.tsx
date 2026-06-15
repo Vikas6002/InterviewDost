@@ -180,7 +180,6 @@ export function Result() {
 
   return (
     <div className="mx-auto min-h-full w-full max-w-5xl space-y-6 p-6">
-      {/* Loading */}
       {!ready && (
         <div className="flex flex-col items-center justify-center gap-4 py-32 text-center">
           <Loader2 className="size-8 animate-spin text-muted-foreground" />
@@ -197,7 +196,6 @@ export function Result() {
 
       {ready && (
         <>
-          {/* Hero */}
           <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h1 className="text-2xl font-semibold tracking-tight">Interview Results</h1>
@@ -208,7 +206,6 @@ export function Result() {
             <ScoreRing score={result.score} />
           </div>
 
-          {/* Stats grid */}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Card className="rounded-none border-border/60">
               <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -284,7 +281,6 @@ export function Result() {
             </Card>
           </div>
 
-          {/* AI Feedback */}
           <Card className="rounded-none border-border/60">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
@@ -302,9 +298,7 @@ export function Result() {
             </CardContent>
           </Card>
 
-          {/* Two-column: Radar + Weak/Strong */}
           <div className="grid gap-6 lg:grid-cols-2">
-            {/* Radar */}
             <Card className="rounded-none border-border/60">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base">
@@ -350,7 +344,6 @@ export function Result() {
               </CardContent>
             </Card>
 
-            {/* Weak / Strong */}
             <div className="flex flex-col gap-6">
               {weakest.length > 0 && (
                 <Card className="rounded-none border-l-4 border-l-rose-500/50 border-border/60">
@@ -431,7 +424,6 @@ export function Result() {
             </div>
           </div>
 
-          {/* Transcript */}
           <Card className="rounded-none border-border/60">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">

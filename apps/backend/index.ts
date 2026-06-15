@@ -429,7 +429,7 @@ app.get("/api/v1/dashboard/stats", sensitiveLimiter, async (req, res) => {
     : 0;
 
   const scoresOverTime = completed.map((i) => ({
-    date: i.createdAt.toISOString().split("T")[0],
+    date: i.createdAt.toISOString(),
     score: i.score,
     type: i.type,
   }));

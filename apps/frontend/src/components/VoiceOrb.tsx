@@ -47,7 +47,6 @@ export function VoiceOrb({
   return (
     <div className="flex flex-col items-center gap-5">
       <div className="relative grid h-52 w-52 place-items-center">
-        {/* Outer reactive ring */}
         <div
           className={cn(
             "absolute inset-0 rounded-full border transition-opacity duration-150",
@@ -58,7 +57,6 @@ export function VoiceOrb({
             opacity: 0.3 + clamped * 0.5,
           }}
         />
-        {/* Secondary ring */}
         <div
           className={cn("absolute h-40 w-40 rounded-full border", a.ring)}
           style={{
@@ -66,7 +64,6 @@ export function VoiceOrb({
             opacity: 0.4 + clamped * 0.4,
           }}
         />
-        {/* Core orb */}
         <div
           className={cn(
             "relative grid h-28 w-28 place-items-center rounded-full bg-gradient-to-br text-white transition-transform duration-100",
@@ -81,7 +78,6 @@ export function VoiceOrb({
         </div>
       </div>
 
-      {/* Equalizer bars driven by the volume level */}
       <div className="flex h-6 items-end gap-1">
         {[0.6, 0.85, 1, 0.7, 0.45].map((weight, i) => (
           <span

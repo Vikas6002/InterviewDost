@@ -139,7 +139,6 @@ export function DashboardAnalytics() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6">
-      {/* Header */}
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Performance Analytics</h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -147,7 +146,6 @@ export function DashboardAnalytics() {
         </p>
       </div>
 
-      {/* Stats grid */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card className="rounded-none">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -215,10 +213,7 @@ export function DashboardAnalytics() {
           </CardContent>
         </Card>
       </div>
-
-      {/* Two column layout: Radar + Trend */}
       <div className="grid gap-6 lg:grid-cols-2">
-        {/* Radar chart */}
         <Card className="rounded-none">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
@@ -265,7 +260,6 @@ export function DashboardAnalytics() {
           </CardContent>
         </Card>
 
-        {/* Trend chart */}
         <Card className="rounded-none">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
@@ -330,7 +324,6 @@ export function DashboardAnalytics() {
         </Card>
       </div>
 
-      {/* Weakest & Strongest areas */}
       <div className="grid gap-6 lg:grid-cols-2">
         {weakestSkills.length > 0 && (
           <Card className="rounded-none border-l-4 border-l-rose-500/50">
@@ -400,7 +393,6 @@ export function DashboardAnalytics() {
         )}
       </div>
 
-      {/* AI Insights */}
       {data.feedbacks.length > 0 && (
         <Card className="rounded-none">
           <CardHeader>
@@ -439,7 +431,6 @@ export function DashboardAnalytics() {
         </Card>
       )}
 
-      {/* Recent interviews */}
       {data.recentInterviews.length > 0 && (
         <Card className="rounded-none">
           <CardHeader>

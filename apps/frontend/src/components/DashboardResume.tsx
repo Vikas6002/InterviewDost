@@ -115,7 +115,6 @@ export function DashboardResume() {
       </div>
 
       <div className="space-y-5 rounded-none border border-border bg-card/50 p-6 backdrop-blur">
-        {/* PDF Upload */}
         <div className="space-y-2">
           <label className="text-sm font-medium">
             Upload Resume (PDF)
@@ -164,7 +163,6 @@ export function DashboardResume() {
           )}
         </div>
 
-        {/* Job Description */}
         <div className="space-y-2">
           <label className="text-sm font-medium">
             Job Description

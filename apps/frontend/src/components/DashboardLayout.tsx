@@ -31,7 +31,6 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      {/* Mobile overlay */}
       {sidebarOpen && (
         <div
           className="fixed inset-0 z-40 bg-black/50 lg:hidden"
@@ -39,14 +38,12 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
         />
       )}
 
-      {/* Sidebar */}
       <aside
         className={cn(
           "fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-border bg-sidebar transition-transform duration-200 ease-in-out lg:static lg:translate-x-0",
           sidebarOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >
-        {/* Logo */}
         <div className="flex h-14 items-center justify-between border-b border-border px-5">
           <button
             onClick={() => navigate("/dashboard")}
@@ -63,7 +60,6 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
           </button>
         </div>
 
-        {/* Navigation */}
         <nav className="flex-1 space-y-1 overflow-y-auto p-3">
           {sidebarItems.map((item) => (
             <NavLink
@@ -87,7 +83,6 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
           ))}
         </nav>
 
-        {/* User area */}
         <div className="border-t border-border p-3">
           <div className="mb-3 flex items-center gap-3 rounded-none px-3 py-2">
             <div className="size-8 shrink-0 overflow-hidden rounded-full bg-sidebar-accent">
@@ -124,9 +119,7 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      {/* Main content */}
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Top bar (mobile) */}
         <header className="flex h-14 items-center gap-3 border-b border-border px-4 lg:hidden">
           <button
             onClick={() => setSidebarOpen(true)}
@@ -140,7 +133,6 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        {/* Content */}
         <main className="flex-1 overflow-y-auto">
           {children}
         </main>

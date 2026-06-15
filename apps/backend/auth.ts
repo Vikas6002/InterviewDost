@@ -1,7 +1,7 @@
 import { Router } from "express";
 import crypto from "crypto";
 import { prisma, withDb } from "./db";
-import { GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, FRONTEND_URL } from "./env";
+import { GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, FRONTEND_URL, BACKEND_URL, NODE_ENV } from "./env";
 import rateLimit from "express-rate-limit";
 
 export const authRouter = Router();
@@ -16,20 +16,38 @@ const authLimiter = rateLimit({
 
 authRouter.use(authLimiter);
 
+const TOKEN_HEADER_REGEX = /^Bearer\s+(.+)$/;
+
+function extractToken(req: import("express").Request): string | null {
+  const header = req.headers.authorization;
+  if (!header) return null;
+  const match = header.match(TOKEN_HEADER_REGEX);
+  return match?.[1]?.trim() ?? null;
+}
+
 function generateToken(): string {
   return crypto.randomBytes(48).toString("hex");
 }
 
 authRouter.get("/github", (_req, res) => {
   const state = generateToken();
-  const url = `https://github.com/login/oauth/authorize?client_id=${GITHUB_CLIENT_ID}&redirect_uri=${encodeURIComponent("http://localhost:3001/api/v1/auth/github/callback")}&scope=read:user&state=${state}`;
+  const redirectUri = `${BACKEND_URL}/api/v1/auth/github/callback`;
+  const url = `https://github.com/login/oauth/authorize?client_id=${GITHUB_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=read:user&state=${state}`;
   res.cookie("oauth_state", state, {
     httpOnly: true,
     sameSite: "lax",
     maxAge: 10 * 60 * 1000,
-    secure: false,
+    secure: NODE_ENV === "production",
   });
   res.redirect(url);
+});
+
+authRouter.post("/logout", async (req, res) => {
+  const token = extractToken(req);
+  if (token) {
+    await withDb(() => prisma.session.deleteMany({ where: { token } }));
+  }
+  res.json({ ok: true });
 });
 
 authRouter.get("/github/callback", async (req, res) => {
@@ -40,20 +58,29 @@ authRouter.get("/github/callback", async (req, res) => {
   }
 
   const cookieState = req.cookies?.oauth_state;
-  if (!cookieState && process.env.NODE_ENV === "production") {
+  if (cookieState && state !== cookieState) {
     res.status(400).json({ error: "Invalid state parameter" });
     return;
   }
 
-  const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({
-      client_id: GITHUB_CLIENT_ID,
-      client_secret: GITHUB_CLIENT_SECRET,
-      code,
-    }),
-  });
+  const controller1 = new AbortController();
+  const t1 = setTimeout(() => controller1.abort(), 10000);
+  let tokenRes;
+  try {
+    tokenRes = await fetch("https://github.com/login/oauth/access_token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({
+        client_id: GITHUB_CLIENT_ID,
+        client_secret: GITHUB_CLIENT_SECRET,
+        code,
+      }),
+      signal: controller1.signal,
+    });
+  } finally {
+    clearTimeout(t1);
+  }
+
   const tokenData = await tokenRes.json();
   const accessToken = tokenData.access_token as string;
   if (!accessToken) {
@@ -61,9 +88,18 @@ authRouter.get("/github/callback", async (req, res) => {
     return;
   }
 
-  const userRes = await fetch("https://api.github.com/user", {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  const controller2 = new AbortController();
+  const t2 = setTimeout(() => controller2.abort(), 10000);
+  let userRes;
+  try {
+    userRes = await fetch("https://api.github.com/user", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal: controller2.signal,
+    });
+  } finally {
+    clearTimeout(t2);
+  }
+
   if (!userRes.ok) {
     res.redirect(`${FRONTEND_URL}/login?error=github_api_failed`);
     return;
@@ -109,7 +145,7 @@ authRouter.get("/github/callback", async (req, res) => {
 });
 
 authRouter.get("/me", async (req, res) => {
-  const token = req.headers.authorization?.replace("Bearer ", "");
+  const token = extractToken(req);
   if (!token) {
     res.status(401).json({ error: "No token" });
     return;
@@ -134,12 +170,4 @@ authRouter.get("/me", async (req, res) => {
       avatarUrl: session.user.avatarUrl,
     },
   });
-});
-
-authRouter.post("/logout", async (req, res) => {
-  const token = req.headers.authorization?.replace("Bearer ", "");
-  if (token) {
-    await withDb(() => prisma.session.deleteMany({ where: { token } }));
-  }
-  res.json({ ok: true });
 });

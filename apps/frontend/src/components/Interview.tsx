@@ -4,6 +4,7 @@ import { useNavigate, useParams } from "react-router";
 import { Bot, Loader2, PhoneOff, User } from "lucide-react";
 import { Button } from "./ui/button";
 import { VoiceOrb } from "./VoiceOrb";
+import { useAuth } from "@/lib/auth";
 
 type Status = "connecting" | "live" | "ending";
 
@@ -27,10 +28,18 @@ function createLevelMeter(ctx: AudioContext, stream: MediaStream) {
   };
 }
 
+async function readMessageData(event: MessageEvent): Promise<string> {
+  if (typeof event.data === "string") return event.data;
+  if (event.data instanceof Blob) return event.data.text();
+  if (event.data instanceof ArrayBuffer) return new TextDecoder().decode(event.data);
+  return String(event.data);
+}
+
 export function Interview() {
   const { interviewId } = useParams();
   const navigate = useNavigate();
 
+  const { token } = useAuth();
   const [status, setStatus] = useState<Status>("connecting");
   const [aiLevel, setAiLevel] = useState(0);
   const [userLevel, setUserLevel] = useState(0);
@@ -83,85 +92,106 @@ export function Interview() {
   }, []);
 
   useEffect(() => {
+    if (!token) return;
+
     let cancelled = false;
 
     (async () => {
-      const ms = await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (cancelled) {
-        ms.getTracks().forEach((t) => t.stop());
-        return;
-      }
-      userStreamRef.current = ms;
-
-      const audioCtx = new AudioContext();
-      audioCtxRef.current = audioCtx;
-      const userMeter = createLevelMeter(audioCtx, ms);
-
-      const wsUrl = BACKEND_URL.replace(/^http/, "ws");
-      const dgWs = new WebSocket(`${wsUrl}/api/v1/stt`);
-      deepgramWsRef.current = dgWs;
-
-      let sttReady = false;
-      dgWs.onmessage = (firstMsg) => {
-        const parsed = JSON.parse(firstMsg.data);
-        if (parsed.type === "connected") {
-          sttReady = true;
-          dgWs.onmessage = handleSttMessage;
-
-          const mediaRecorder = new MediaRecorder(ms, {
-            mimeType: "audio/webm",
-          });
-          recorderRef.current = mediaRecorder;
-          mediaRecorder.start(250);
-          mediaRecorder.addEventListener("dataavailable", (event) => {
-            if (dgWs.readyState === WebSocket.OPEN) dgWs.send(event.data);
-          });
+      try {
+        const ms = await navigator.mediaDevices.getUserMedia({ audio: true });
+        if (cancelled) {
+          ms.getTracks().forEach((t) => t.stop());
+          return;
         }
-      };
+        userStreamRef.current = ms;
 
-      function handleSttMessage(message: MessageEvent) {
-        const received = JSON.parse(message.data);
-        const transcript = received.channel?.alternatives[0]?.transcript;
-        if (transcript && received.speech_final && !processingRef.current) {
-          processingRef.current = true;
-          backendWsRef.current?.send(
-            JSON.stringify({ type: "user_message", text: transcript }),
-          );
+        const audioCtx = new AudioContext();
+        audioCtxRef.current = audioCtx;
+        const userMeter = createLevelMeter(audioCtx, ms);
+
+        const wsUrl = BACKEND_URL.replace(/^http/, "ws");
+        const dgWs = new WebSocket(`${wsUrl}/api/v1/stt`);
+        deepgramWsRef.current = dgWs;
+
+        let sttReady = false;
+        dgWs.onmessage = async (firstMsg) => {
+          try {
+            const text = await readMessageData(firstMsg);
+            const parsed = JSON.parse(text);
+            if (parsed.type === "connected") {
+              sttReady = true;
+              dgWs.onmessage = handleSttMessage;
+
+              const mediaRecorder = new MediaRecorder(ms, {
+                mimeType: "audio/webm",
+              });
+              recorderRef.current = mediaRecorder;
+              mediaRecorder.start(250);
+              mediaRecorder.addEventListener("dataavailable", (event) => {
+                if (dgWs.readyState === WebSocket.OPEN) dgWs.send(event.data);
+              });
+            }
+          } catch (e) {
+            console.error("STT init error:", e);
+          }
+        };
+
+        async function handleSttMessage(message: MessageEvent) {
+          try {
+            const text = await readMessageData(message);
+            const received = JSON.parse(text);
+            const transcript = received.channel?.alternatives[0]?.transcript;
+            if (transcript && received.speech_final && !processingRef.current) {
+              processingRef.current = true;
+              backendWsRef.current?.send(
+                JSON.stringify({ type: "user_message", text: transcript }),
+              );
+            }
+          } catch (e) {
+            console.error("STT message error:", e);
+          }
         }
-      }
 
-      const backendWsUrl = BACKEND_URL.replace(/^http/, "ws");
-      const bWs = new WebSocket(
-        `${backendWsUrl}/api/v1/ws?interviewId=${interviewId}`,
-      );
-      backendWsRef.current = bWs;
+        const backendWsUrl = BACKEND_URL.replace(/^http/, "ws");
+        const bWs = new WebSocket(
+          `${backendWsUrl}/api/v1/ws?interviewId=${interviewId}&token=${encodeURIComponent(token ?? "")}`,
+        );
+        backendWsRef.current = bWs;
 
-      bWs.onmessage = (event) => {
-        const msg = JSON.parse(event.data);
-        if (msg.type === "ai_message" && msg.text) {
-          speakText(msg.text);
-        } else if (msg.type === "error") {
-          processingRef.current = false;
-        }
-      };
+        bWs.onmessage = async (event) => {
+          try {
+            const text = await readMessageData(event);
+            const msg = JSON.parse(text);
+            if (msg.type === "ai_message" && msg.text) {
+              speakText(msg.text);
+            } else if (msg.type === "error") {
+              processingRef.current = false;
+            }
+          } catch (e) {
+            console.error("Backend WS error:", e);
+          }
+        };
 
-      bWs.onopen = () => {
-        if (!cancelled) setStatus("live");
-      };
+        bWs.onopen = () => {
+          if (!cancelled) setStatus("live");
+        };
 
-      const tick = () => {
-        if (userMeter) setUserLevel(userMeter());
+        const tick = () => {
+          if (userMeter) setUserLevel(userMeter());
+          rafRef.current = requestAnimationFrame(tick);
+        };
         rafRef.current = requestAnimationFrame(tick);
-      };
-      rafRef.current = requestAnimationFrame(tick);
+      } catch (e) {
+        console.error("Mic access denied or unavailable:", e);
+        if (!cancelled) setStatus("ending");
+      }
     })();
 
     return () => {
       cancelled = true;
       cleanup();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [interviewId, speakText]);
+  }, [interviewId, speakText, token]);
 
   function cleanup() {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -184,7 +214,7 @@ export function Interview() {
   const userSpeaking = userLevel > 0.06 && userLevel > aiLevel;
 
   return (
-    <main className="flex h-screen w-screen flex-col overflow-hidden">
+    <main className="flex h-screen w-screen flex-col overflow-hidden bg-background">
       <header className="flex items-center justify-between px-6 py-5">
         <div className="flex items-center gap-2 text-sm font-medium">
           <span className="relative flex size-2.5">

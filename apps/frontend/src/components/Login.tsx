@@ -9,12 +9,12 @@ export function Login() {
 
   if (loading) return null;
   if (user) {
-    navigate("/", { replace: true });
+    navigate("/dashboard", { replace: true });
     return null;
   }
 
   return (
-    <main className="flex h-screen w-screen items-center justify-center px-6">
+    <main className="flex h-screen w-screen items-center justify-center px-6 bg-background">
       <div className="flex w-full max-w-sm flex-col items-center text-center">
         <h1 className="text-3xl font-bold tracking-tight">Sign in</h1>
         <p className="mt-2 text-muted-foreground">

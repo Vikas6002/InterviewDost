@@ -15,12 +15,18 @@ export async function getGroqChatCompletion(
   );
   if (!interview) throw new Error("Interview not found");
 
+  const contextBlock =
+    interview.type === "GitHub" && interview.githubMetadata
+      ? `Here is the candidate's GitHub metadata for context:\n${interview.githubMetadata}`
+      : interview.type === "Resume" && interview.resumeText && interview.jobRole
+        ? `Here is the candidate's resume:\n${interview.resumeText}\n\nJob description they're applying for:\n${interview.jobRole}`
+        : "No additional context available.";
+
   const systemMessage = {
     role: "system" as const,
-    content: `You are an AI interviewer conducting a computer science interview. Use English only.
+    content: `You are an AI interviewer conducting a technical interview. Use English only.
 
-Here is the candidate's GitHub metadata for context:
-${interview.githubMetadata}
+${contextBlock}
 
 CRITICAL RULES - FOLLOW THESE EXACTLY:
 1. Ask ONLY ONE question at a time. Never ask multiple questions in a single message.

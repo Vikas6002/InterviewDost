@@ -10,8 +10,10 @@ const outputSchema = z.object({
 });
 
 const RESULT_PROMPT = `
-You are an expert evaluator. Your job is to evaluate the users interview. Give them a score out of 10
+You are an expert evaluator. Your job is to evaluate the user's interview. Give them a score out of 10
 and also let them know any feedback you have about their interview.
+
+Interview context: {{INTERVIEW_CONTEXT}}
 
 Please return only a JSON object with the following structure (no other text):
 {
@@ -23,9 +25,30 @@ Transcript:
 {{USER_TRANSCRIPT}}
 `;
 
+interface InterviewContext {
+  type: "GitHub" | "Resume";
+  jobRole?: string | null;
+  githubMetadata?: any;
+  resumeText?: string | null;
+}
+
 export async function calculateResult(
   messages: { type: "Assistant" | "User"; message: string; createdAt: Date }[],
+  context?: InterviewContext,
 ) {
+  const interviewContextStr = context
+    ? `Type: ${context.type}${context.jobRole ? `, Job Description Provided` : ""}${
+        context.type === "GitHub" && context.githubMetadata
+          ? `, GitHub Repos analyzed`
+          : ""
+      }`
+    : "General interview";
+
+  const prompt = RESULT_PROMPT.replace(
+    "{{USER_TRANSCRIPT}}",
+    JSON.stringify(messages),
+  ).replace("{{INTERVIEW_CONTEXT}}", interviewContextStr);
+
   const response = await fetch(GROQ_API_URL, {
     method: "POST",
     headers: {
@@ -34,15 +57,7 @@ export async function calculateResult(
     },
     body: JSON.stringify({
       model: GROQ_MODEL,
-      messages: [
-        {
-          role: "system",
-          content: RESULT_PROMPT.replace(
-            "{{USER_TRANSCRIPT}}",
-            JSON.stringify(messages),
-          ),
-        },
-      ],
+      messages: [{ role: "system", content: prompt }],
       temperature: 0.3,
       max_tokens: 1024,
     }),

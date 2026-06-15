@@ -6,7 +6,7 @@ import cookieParser from "cookie-parser";
 import http from "http";
 import { WebSocketServer, WebSocket as WsWebSocket } from "ws";
 
-import { PreInterviewBody, TTSBody, WSMessageSchema } from "./types";
+import { PreInterviewBody, ResumeInterviewBody, TTSBody, WSMessageSchema } from "./types";
 import { scrapeGithub } from "./scrapers/github";
 import { prisma, withDb } from "./db";
 import { getGroqChatCompletion } from "./sideband";
@@ -16,34 +16,28 @@ import { authRouter } from "./auth";
 
 const app = express();
 
+const cspDirectives = {
+  defaultSrc: ["'self'"],
+  scriptSrc: ["'self'", "'unsafe-inline'"],
+  styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+  fontSrc: ["'self'", "https://fonts.gstatic.com"],
+  connectSrc: ["'self'", FRONTEND_URL, "wss://api.deepgram.com"],
+  imgSrc: ["'self'", "data:", "https://*.githubusercontent.com", "https://images.unsplash.com"],
+  frameSrc: ["'none'"],
+  objectSrc: ["'none'"],
+  baseUri: ["'self'"],
+  formAction: ["'self'"],
+};
+
 app.use(
   helmet({
-    contentSecurityPolicy:
-      NODE_ENV === "production"
-        ? {
-            directives: {
-              defaultSrc: ["'self'"],
-              scriptSrc: ["'self'", "'unsafe-inline'"],
-              styleSrc: [
-                "'self'",
-                "'unsafe-inline'",
-                "https://fonts.googleapis.com",
-              ],
-              fontSrc: ["'self'", "https://fonts.gstatic.com"],
-              connectSrc: ["'self'", FRONTEND_URL, "wss://api.deepgram.com"],
-              imgSrc: [
-                "'self'",
-                "data:",
-                "https://*.githubusercontent.com",
-                "https://images.unsplash.com",
-              ],
-              frameSrc: ["'none'"],
-              objectSrc: ["'none'"],
-            },
-          }
-        : false,
+    contentSecurityPolicy: NODE_ENV === "production" ? { directives: cspDirectives } : false,
+    crossOriginEmbedderPolicy: false,
+    hsts: NODE_ENV === "production" ? { maxAge: 31536000, includeSubDomains: true, preload: true } : false,
   }),
 );
+
+app.disable("x-powered-by");
 
 app.use(
   cors({
@@ -80,8 +74,17 @@ app.use("/api/v1/auth", authRouter);
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 
-async function getUserFromToken(token: string | undefined) {
-  if (!token) return null;
+const TOKEN_HEADER_REGEX = /^Bearer\s+(.+)$/;
+
+function extractToken(req: express.Request): string | null {
+  const header = req.headers.authorization;
+  if (!header) return null;
+  const match = header.match(TOKEN_HEADER_REGEX);
+  return match?.[1]?.trim() ?? null;
+}
+
+async function getUserFromToken(token: string | null | undefined) {
+  if (!token || token.length > 200) return null;
   const session = await withDb(() =>
     prisma.session.findUnique({
       where: { token },
@@ -96,38 +99,36 @@ function getTokenFromRequest(request: http.IncomingMessage): string | null {
   const cookieHeader = request.headers.cookie;
   if (cookieHeader) {
     const match = cookieHeader.match(/session_token=([^;]+)/);
-    if (match) return match[1];
+    if (match?.[1]) return match[1];
   }
   const url = new URL(request.url!, `http://${request.headers.host}`);
   return url.searchParams.get("token");
 }
 
-server.on("upgrade", (request, socket, head) => {
+server.on("upgrade", async (request, socket, head) => {
   const url = new URL(request.url!, `http://${request.headers.host}`);
 
   if (url.pathname === "/api/v1/ws") {
     socket.on("error", () => {});
 
-    getTokenFromRequest(request).then((token) => {
-      if (!token) {
-        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-        socket.destroy();
-        return;
-      }
-      getUserFromToken(token).then((user) => {
-        if (!user) {
-          socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-          socket.destroy();
-          return;
-        }
+    const token = getTokenFromRequest(request);
+    if (!token) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    const user = await getUserFromToken(token);
+    if (!user) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.destroy();
+      return;
+    }
 
-        wss.handleUpgrade(request, socket, head, (ws) => {
-          ws.on("error", () => {});
-          (ws as any).interviewId = url.searchParams.get("interviewId");
-          (ws as any).userId = user.id;
-          wss.emit("connection", ws, request);
-        });
-      });
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      ws.on("error", () => {});
+      (ws as any).interviewId = url.searchParams.get("interviewId");
+      (ws as any).userId = user.id;
+      wss.emit("connection", ws, request);
     });
     return;
   }
@@ -264,6 +265,9 @@ app.post("/api/v1/tts", sensitiveLimiter, async (req, res) => {
   }
 
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+
     const response = await fetch("https://api.deepgram.com/v1/speak", {
       method: "POST",
       headers: {
@@ -272,38 +276,50 @@ app.post("/api/v1/tts", sensitiveLimiter, async (req, res) => {
         Accept: "audio/mpeg",
       },
       body: JSON.stringify({ text: parsed.data.text }),
+      signal: controller.signal,
     });
 
+    clearTimeout(timeout);
+
     if (!response.ok) {
-      const err = await response.text();
       res.status(502).json({ error: "TTS service error" });
       return;
     }
 
     const audioBuffer = await response.arrayBuffer();
     res.set("Content-Type", "audio/mpeg");
+    res.set("X-Content-Type-Options", "nosniff");
     res.send(Buffer.from(audioBuffer));
-  } catch (error) {
-    console.error("TTS error:", error);
-    res.status(500).json({ error: "TTS failed" });
+  } catch (error: unknown) {
+    const msg = (error as Error).message ?? "";
+    if (msg.includes("abort")) {
+      res.status(504).json({ error: "TTS request timed out" });
+    } else {
+      res.status(500).json({ error: "TTS failed" });
+    }
   }
 });
 
-app.post("/api/v1/pre-interview", sensitiveLimiter, async (req, res) => {
-  const token = req.headers.authorization?.replace("Bearer ", "");
+const AUTH_REQUIRED = "Authentication required" as const;
+const INVALID_REQUEST = "Invalid request body" as const;
+
+async function authenticatedUser(req: express.Request, res: express.Response): Promise<{ id: string; username: string; avatarUrl: string | null } | null> {
+  const token = extractToken(req);
   const user = await getUserFromToken(token);
   if (!user) {
-    res.status(401).json({ error: "Authentication required" });
-    return;
+    res.status(401).json({ error: AUTH_REQUIRED });
+    return null;
   }
+  return user;
+}
+
+app.post("/api/v1/pre-interview/github", sensitiveLimiter, async (req, res) => {
+  const user = await authenticatedUser(req, res);
+  if (!user) return;
 
   const parsed = PreInterviewBody.safeParse(req.body);
   if (!parsed.success) {
-    res
-      .status(400)
-      .json({
-        error: parsed.error.issues[0]?.message ?? "Invalid request body",
-      });
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? INVALID_REQUEST });
     return;
   }
 
@@ -316,12 +332,17 @@ app.post("/api/v1/pre-interview", sensitiveLimiter, async (req, res) => {
     return;
   }
 
-  const githubData = await scrapeGithub(githubUsername);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  let githubData;
+  try {
+    githubData = await scrapeGithub(githubUsername);
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!githubData || (Array.isArray(githubData) && githubData.length === 0)) {
-    res
-      .status(404)
-      .json({ error: "GitHub profile not found or has no public repos" });
+    res.status(404).json({ error: "GitHub profile not found or has no public repos" });
     return;
   }
 
@@ -329,26 +350,200 @@ app.post("/api/v1/pre-interview", sensitiveLimiter, async (req, res) => {
     prisma.interview.create({
       data: {
         userId: user.id,
+        type: "GitHub",
         githubMetadata: JSON.stringify(githubData),
         status: "Pre",
       },
     }),
   );
 
-  res.json({ id: interview.id });
+  res.status(201).json({ id: interview.id });
 });
 
-app.get("/api/v1/result/:interviewId", sensitiveLimiter, async (req, res) => {
-  const token = req.headers.authorization?.replace("Bearer ", "");
-  const user = await getUserFromToken(token);
-  if (!user) {
-    res.status(401).json({ error: "Authentication required" });
+app.post("/api/v1/pre-interview/resume", sensitiveLimiter, async (req, res) => {
+  const user = await authenticatedUser(req, res);
+  if (!user) return;
+
+  const parsed = ResumeInterviewBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? INVALID_REQUEST });
     return;
   }
 
+  const interview = await withDb(() =>
+    prisma.interview.create({
+      data: {
+        userId: user.id,
+        type: "Resume",
+        jobRole: parsed.data.jobRole,
+        resumeText: parsed.data.resumeText,
+        status: "Pre",
+      },
+    }),
+  );
+
+  res.status(201).json({ id: interview.id });
+});
+
+app.get("/api/v1/interviews", sensitiveLimiter, async (req, res) => {
+  const user = await authenticatedUser(req, res);
+  if (!user) return;
+
+  const interviews = await withDb(() =>
+    prisma.interview.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: "desc" },
+      include: { conversations: true },
+    }),
+  );
+
+  res.json({
+    interviews: interviews.map((i) => ({
+      id: i.id,
+      type: i.type,
+      score: i.score,
+      feedback: i.feedback,
+      status: i.status,
+      jobRole: i.jobRole,
+      createdAt: i.createdAt,
+      messageCount: i.conversations.length,
+    })),
+  });
+});
+
+app.get("/api/v1/dashboard/stats", sensitiveLimiter, async (req, res) => {
+  const user = await authenticatedUser(req, res);
+  if (!user) return;
+
+  const interviews = await withDb(() =>
+    prisma.interview.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: "asc" },
+    }),
+  );
+
+  const completed = interviews.filter((i) => i.status === "Done");
+  const totalScore = completed.reduce((sum, i) => sum + i.score, 0);
+  const averageScore = completed.length > 0
+    ? Math.round((totalScore / completed.length) * 10) / 10
+    : 0;
+
+  const scoresOverTime = completed.map((i) => ({
+    date: i.createdAt.toISOString().split("T")[0],
+    score: i.score,
+    type: i.type,
+  }));
+
+  const typeBreakdown = {
+    github: interviews.filter((i) => i.type === "GitHub").length,
+    resume: interviews.filter((i) => i.type === "Resume").length,
+  };
+
+  const statusCount = {
+    completed: completed.length,
+    inProgress: interviews.filter((i) => i.status === "InProgress").length,
+    pre: interviews.filter((i) => i.status === "Pre").length,
+  };
+
+  res.json({
+    totalInterviews: interviews.length,
+    completedInterviews: completed.length,
+    averageScore,
+    scoresOverTime,
+    typeBreakdown,
+    statusCount,
+  });
+});
+
+app.get("/api/v1/analytics", sensitiveLimiter, async (req, res) => {
+  const user = await authenticatedUser(req, res);
+  if (!user) return;
+
+  const interviews = await withDb(() =>
+    prisma.interview.findMany({
+      where: { userId: user.id, status: "Done" },
+      orderBy: { createdAt: "asc" },
+    }),
+  );
+
+  const totalCompleted = interviews.length;
+  const scoreList = interviews.map((i) => i.score);
+  const bestScore = scoreList.length > 0 ? Math.max(...scoreList) : 0;
+  const avgScore = scoreList.length > 0
+    ? Math.round((scoreList.reduce((a, b) => a + b, 0) / scoreList.length) * 10) / 10
+    : 0;
+  const recentAvg = scoreList.slice(-3).length > 0
+    ? Math.round((scoreList.slice(-3).reduce((a, b) => a + b, 0) / scoreList.slice(-3).length) * 10) / 10
+    : 0;
+  const improvement = scoreList.length >= 2
+    ? Math.round(((scoreList[scoreList.length - 1] ?? 0) - (scoreList[0] ?? 0)) * 10) / 10
+    : 0;
+
+  const skillKeywords: Record<string, RegExp> = {
+    "Data Structures": /array|linked list|stack|queue|tree|graph|hash|heap|trie/i,
+    Algorithms: /sort|search|recursion|dp|dynamic.program|greedy|backtrack|divide|conquer/i,
+    "System Design": /scalab|distributed|microservice|load.balanc|cache|database.shard|consistenthash/i,
+    Databases: /sql|nosql|index|query|normaliz|transaction|acid|mongodb|postgres|mysql/i,
+    "Web Dev": /react|api|rest|graphql|http|frontend|backend|full.stack|express|next/i,
+    "Problem Solving": /complexity|optimize|refactor|edge.case|brute.force|efficient/i,
+  };
+
+  const skillScores: Record<string, number[]> = {};
+  for (const key of Object.keys(skillKeywords)) {
+    skillScores[key] = [];
+  }
+
+  for (const interview of interviews) {
+    const combined = `${interview.feedback ?? ""} ${interview.jobRole ?? ""} ${interview.resumeText ?? ""}`;
+    for (const [skill, regex] of Object.entries(skillKeywords)) {
+      if (regex.test(combined)) {
+        (skillScores[skill] ?? (skillScores[skill] = [])).push(interview.score);
+      }
+    }
+  }
+
+  const radarData = Object.entries(skillScores)
+    .map(([skill, scores]) => ({
+      skill,
+      score: scores.length > 0
+        ? Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10
+        : 0,
+      interviews: scores.length,
+    }))
+    .sort((a, b) => b.score - a.score);
+
+  const feedbacks = interviews
+    .filter((i) => i.feedback)
+    .map((i) => i.feedback!);
+
+  res.json({
+    totalCompleted,
+    bestScore,
+    averageScore: avgScore,
+    recentAverage: recentAvg,
+    improvement,
+    scoreList,
+    radarData,
+    feedbacks,
+    recentInterviews: interviews.slice(-5).reverse().map((i) => ({
+      id: i.id,
+      score: i.score,
+      type: i.type,
+      jobRole: i.jobRole,
+      createdAt: i.createdAt,
+    })),
+  });
+});
+
+app.get("/api/v1/result/:interviewId", sensitiveLimiter, async (req, res) => {
+  const user = await authenticatedUser(req, res);
+  if (!user) return;
+
+  const interviewId = req.params.interviewId as string;
   if (
-    typeof req.params.interviewId !== "string" ||
-    req.params.interviewId.length > 100
+    !interviewId ||
+    interviewId.length > 100 ||
+    !/^[a-zA-Z0-9-]+$/.test(interviewId)
   ) {
     res.status(400).json({ error: "Invalid interview ID" });
     return;
@@ -356,49 +551,66 @@ app.get("/api/v1/result/:interviewId", sensitiveLimiter, async (req, res) => {
 
   const interview = await withDb(() =>
     prisma.interview.findFirst({
-      where: {
-        id: req.params.interviewId,
-        userId: user.id,
-      },
+      where: { id: interviewId, userId: user.id },
       include: { conversations: true },
     }),
-  );
+  ) as {
+    id: string;
+    userId: string;
+    type: string;
+    githubMetadata: any;
+    jobRole: string | null;
+    resumeText: string | null;
+    status: string;
+    score: number;
+    feedback: string | null;
+    createdAt: Date;
+    conversations: { id: string; type: string; message: string; createdAt: Date }[];
+  } | null;
 
   if (!interview) {
-    res.status(404).json({ message: "Interview not found" });
+    res.status(404).json({ error: "Interview not found" });
     return;
   }
 
   res.json({
     score: interview.score,
     feedback: interview.feedback,
-    transcript: interview.conversations.map(
-      (c: { type: string; message: string; createdAt: Date }) => ({
-        type: c.type,
-        content: c.message,
-        createdAt: c.createdAt,
-      }),
-    ),
+    transcript: interview.conversations.map((c) => ({
+      type: c.type,
+      content: c.message,
+      createdAt: c.createdAt,
+    })),
     status: interview.status,
   });
 
   if (interview.status !== "Done") {
     try {
-      const result = await calculateResult(interview.conversations);
+      const result = await calculateResult(interview.conversations as { type: "User" | "Assistant"; message: string; createdAt: Date }[], {
+        type: interview.type as "GitHub" | "Resume",
+        jobRole: interview.jobRole,
+        githubMetadata: interview.githubMetadata,
+        resumeText: interview.resumeText,
+      });
       await withDb(() =>
         prisma.interview.update({
-          where: { id: req.params.interviewId },
-          data: {
-            status: "Done",
-            feedback: result.feedback,
-            score: result.score,
-          },
+          where: { id: interviewId },
+          data: { status: "Done", feedback: result.feedback, score: result.score },
         }),
       );
-    } catch (error) {
-      console.error("Result calculation error:", error);
+    } catch {
+      console.error("Result calculation error for interview:", interviewId);
     }
   }
+});
+
+app.use((_req, res) => {
+  res.status(404).json({ error: "Not found" });
+});
+
+app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error("Unhandled error:", err.message);
+  res.status(500).json({ error: "Internal server error" });
 });
 
 server.listen(3001, () => {

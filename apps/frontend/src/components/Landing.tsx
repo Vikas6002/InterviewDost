@@ -545,15 +545,6 @@ export function Landing() {
   useLenis();
 
   useEffect(() => {
-    Shery.mouseFollower({
-      skew: true,
-      ease: "cubic-bezier(0.23, 1, 0.320, 1)",
-      duration: 0.5,
-    });
-    Shery.makeMagnet(".magnet", {
-      ease: "cubic-bezier(0.23, 1, 0.320, 1)",
-      duration: 0.5,
-    });
     Shery.textAnimate(".shery-text", {
       style: 1,
       y: 10,
@@ -572,12 +563,12 @@ export function Landing() {
         user={user}
         scrolled={scrolled}
         onLogin={() => navigate("/login")}
-        onDashboard={() => navigate("/interview")}
+        onDashboard={() => navigate("/dashboard")}
       />
       <Hero
         user={user}
         onLogin={() => navigate("/login")}
-        onDashboard={() => navigate("/interview")}
+        onDashboard={() => navigate("/dashboard")}
       />
       <Features />
       <Steps />

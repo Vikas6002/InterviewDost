@@ -35,11 +35,15 @@ model Interview {
   id              String     @id @default(uuid())
   userId          String
   user            User       @relation(fields: [userId], references: [id])
-  githubMetadata  Json
+  type            InterviewType
+  githubMetadata  Json?
+  jobRole         String?
+  resumeText      String?
   status          InterviewStatus
   score           Int       @default(0)
   conversations   Message[]
   feedback        String?
+  createdAt       DateTime  @default(now())
 }
 
 model Message {
@@ -54,6 +58,11 @@ model Message {
 enum MessageType {
   User
   Assistant
+}
+
+enum InterviewType {
+  GitHub
+  Resume
 }
 
 enum InterviewStatus {

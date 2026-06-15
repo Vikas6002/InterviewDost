@@ -3,8 +3,10 @@ import {
   useContext,
   useEffect,
   useState,
+  useRef,
   type ReactNode,
 } from "react";
+import { useNavigate } from "react-router";
 import { BACKEND_URL } from "./config";
 
 interface User {
@@ -33,38 +35,65 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const initialized = useRef(false);
 
   useEffect(() => {
+    if (initialized.current) return;
+    initialized.current = true;
+
     const params = new URLSearchParams(window.location.search);
     const urlToken = params.get("token");
+
     if (urlToken) {
       localStorage.setItem("session_token", urlToken);
       window.history.replaceState({}, "", window.location.pathname);
+      setToken(urlToken);
+      validateToken(urlToken);
+      navigate("/dashboard", { replace: true });
+      return;
     }
 
     const saved = localStorage.getItem("session_token");
     if (saved) {
       setToken(saved);
-      fetch(`${BACKEND_URL}/api/v1/auth/me`, {
-        headers: { Authorization: `Bearer ${saved}` },
-      })
-        .then((r) => r.json())
-        .then((data) => {
-          if (data.user) setUser(data.user);
-          else {
-            localStorage.removeItem("session_token");
-            setToken(null);
-          }
-        })
-        .catch(() => {
-          localStorage.removeItem("session_token");
-          setToken(null);
-        })
-        .finally(() => setLoading(false));
+      validateToken(saved);
     } else {
       setLoading(false);
     }
-  }, []);
+  }, [navigate]);
+
+  async function validateToken(t: string) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/v1/auth/me`, {
+        headers: { Authorization: `Bearer ${t}` },
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        throw new Error(`Auth check failed: ${res.status}`);
+      }
+
+      const data = await res.json();
+      if (data.user) {
+        setUser(data.user);
+      } else {
+        localStorage.removeItem("session_token");
+        setToken(null);
+      }
+    } catch {
+      if (t === localStorage.getItem("session_token")) {
+        localStorage.removeItem("session_token");
+        setToken(null);
+      }
+    } finally {
+      clearTimeout(timeout);
+      setLoading(false);
+    }
+  }
 
   function login() {
     window.location.href = `${BACKEND_URL}/api/v1/auth/github`;

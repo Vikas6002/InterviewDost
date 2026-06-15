@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { getDocument, GlobalWorkerOptions } from "pdfjs-dist";
-import {
+  import {
   ArrowRight,
   FileText,
   Loader2,
@@ -15,6 +15,7 @@ import {
   Briefcase,
   CheckCircle2,
   AlertCircle,
+  Coins,
 } from "lucide-react";
 
 GlobalWorkerOptions.workerSrc = "https://unpkg.com/pdfjs-dist@6.0.227/build/pdf.worker.min.mjs";
@@ -95,9 +96,15 @@ export function DashboardResume() {
         },
         { headers: { Authorization: `Bearer ${token}` } },
       );
+      window.dispatchEvent(new Event("credits-updated"));
       navigate(`/interview/${response.data.id}`);
-    } catch {
-      toast("Something went wrong starting your interview. Please try again.");
+    } catch (err: any) {
+      if (err?.response?.status === 402) {
+        toast("Insufficient credits. Please purchase more credits.");
+        navigate("/dashboard/pricing");
+      } else {
+        toast("Something went wrong starting your interview. Please try again.");
+      }
       setLoading(false);
     }
   }
@@ -190,8 +197,8 @@ export function DashboardResume() {
             </>
           ) : (
             <>
-              Start interview
-              <ArrowRight className="size-4" />
+              <Coins className="size-4" />
+              Start (10 credits)
             </>
           )}
         </Button>

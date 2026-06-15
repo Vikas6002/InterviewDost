@@ -7,6 +7,9 @@ import { DashboardResume } from "./components/DashboardResume";
 import { DashboardGitHub } from "./components/DashboardGitHub";
 import { DashboardAnalytics } from "./components/DashboardAnalytics";
 import { DashboardHistory } from "./components/DashboardHistory";
+import { DashboardPricing } from "./components/DashboardPricing";
+import { DashboardAts } from "./components/DashboardAts";
+import { AtsReview } from "./components/AtsReview";
 import { MouseFollower } from "./components/MouseFollower";
 import { Interview } from "./components/Interview";
 import { Result } from "./components/Result";
@@ -75,6 +78,30 @@ export function App() {
             element={
               <DashboardShell>
                 <DashboardHistory />
+              </DashboardShell>
+            }
+          />
+          <Route
+            path="/dashboard/ats"
+            element={
+              <DashboardShell>
+                <DashboardAts />
+              </DashboardShell>
+            }
+          />
+          <Route
+            path="/dashboard/ats-review/:id"
+            element={
+              <DashboardShell>
+                <AtsReview />
+              </DashboardShell>
+            }
+          />
+          <Route
+            path="/dashboard/pricing"
+            element={
+              <DashboardShell>
+                <DashboardPricing />
               </DashboardShell>
             }
           />

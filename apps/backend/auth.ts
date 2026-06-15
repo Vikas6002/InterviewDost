@@ -126,6 +126,7 @@ authRouter.get("/github/callback", async (req, res) => {
           avatarUrl: githubUser.avatar_url
             ? String(githubUser.avatar_url).slice(0, 500)
             : "",
+          credits: 50,
         },
       }),
     );
@@ -168,6 +169,8 @@ authRouter.get("/me", async (req, res) => {
       id: session.user.id,
       username: session.user.username,
       avatarUrl: session.user.avatarUrl,
+      credits: session.user.credits,
+      isUnlimited: session.user.isUnlimited,
     },
   });
 });

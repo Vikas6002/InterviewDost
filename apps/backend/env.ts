@@ -21,3 +21,6 @@ export const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET!;
 export const FRONTEND_URL = process.env.FRONTEND_URL ?? "http://localhost:3000";
 export const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:3001";
 export const NODE_ENV = process.env.NODE_ENV ?? "development";
+export const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID ?? "";
+export const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET ?? "";
+export const RAZORPAY_WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET ?? "";

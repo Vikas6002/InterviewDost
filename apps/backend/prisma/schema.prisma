@@ -1,8 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client"
   output   = "../generated/prisma"
@@ -17,9 +12,13 @@ model User {
   githubId      String      @unique
   username      String
   avatarUrl     String?
+  credits       Int         @default(50)
+  isUnlimited   Boolean     @default(false)
   createdAt     DateTime    @default(now())
   interviews    Interview[]
   sessions      Session[]
+  payments      Payment[]
+  atsChecks     AtsCheck[]
 }
 
 model Session {
@@ -29,6 +28,18 @@ model Session {
   user      User     @relation(fields: [userId], references: [id])
   createdAt DateTime @default(now())
   expiresAt DateTime
+}
+
+model Payment {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  razorpayId  String   @unique
+  amount      Int
+  credits     Int
+  tier        String
+  status      String   @default("created")
+  createdAt   DateTime @default(now())
 }
 
 model Interview {
@@ -46,13 +57,27 @@ model Interview {
   createdAt       DateTime  @default(now())
 }
 
+model AtsCheck {
+  id             String   @id @default(uuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id])
+  resumeText     String
+  jobDescription String
+  score          Int
+  keywordMatches Json
+  missingSkills  Json
+  suggestions    String
+  summary        String
+  createdAt      DateTime @default(now())
+}
+
 model Message {
-  id              String     @id  @default(uuid())
-  message         String
-  type            MessageType
-  interviewId     String
-  interview       Interview   @relation(fields: [interviewId], references: [id])
-  createdAt       DateTime    @default(now())
+  id          String     @id  @default(uuid())
+  message     String
+  type        MessageType
+  interviewId String
+  interview   Interview  @relation(fields: [interviewId], references: [id])
+  createdAt   DateTime   @default(now())
 }
 
 enum MessageType {

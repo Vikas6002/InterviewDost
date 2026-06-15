@@ -12,6 +12,7 @@ import {
   Loader2,
   Mic,
   Code2,
+  Coins,
 } from "lucide-react";
 
 export function DashboardGitHub() {
@@ -33,9 +34,15 @@ export function DashboardGitHub() {
         { github: github.trim() },
         { headers: { Authorization: `Bearer ${token}` } },
       );
+      window.dispatchEvent(new Event("credits-updated"));
       navigate(`/interview/${response.data.id}`);
-    } catch {
-      toast("Something went wrong starting your interview. Please try again.");
+    } catch (err: any) {
+      if (err?.response?.status === 402) {
+        toast("Insufficient credits. Please purchase more credits.");
+        navigate("/dashboard/pricing");
+      } else {
+        toast("Something went wrong starting your interview. Please try again.");
+      }
       setLoading(false);
     }
   }
@@ -90,8 +97,8 @@ export function DashboardGitHub() {
                 </>
               ) : (
                 <>
-                  Start interview
-                  <ArrowRight className="size-4" />
+                  <Coins className="size-4" />
+                  Start (5 credits)
                 </>
               )}
             </Button>

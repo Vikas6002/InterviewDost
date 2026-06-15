@@ -64,7 +64,7 @@ function CustomTooltip({ active, payload, label }: any) {
 export function DashboardHome() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
-  const [period, setPeriod] = useState<FilterPeriod>("month");
+  const [period, setPeriod] = useState<FilterPeriod>("day");
   const { token } = useAuth();
   const navigate = useNavigate();
 

@@ -1,6 +1,7 @@
 import express from "express";
 import helmet from "helmet";
 import cors from "cors";
+import crypto from "crypto";
 import rateLimit from "express-rate-limit";
 import cookieParser from "cookie-parser";
 import http from "http";
@@ -11,7 +12,7 @@ import { scrapeGithub } from "./scrapers/github";
 import { prisma, withDb } from "./db";
 import { getGroqChatCompletion } from "./sideband";
 import { calculateResult } from "./result";
-import { DEEPGRAM_API_KEY, FRONTEND_URL, NODE_ENV } from "./env";
+import { DEEPGRAM_API_KEY, FRONTEND_URL, NODE_ENV, RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET, GROQ_API_KEY } from "./env";
 import { authRouter } from "./auth";
 
 const app = express();
@@ -302,20 +303,50 @@ app.post("/api/v1/tts", sensitiveLimiter, async (req, res) => {
 
 const AUTH_REQUIRED = "Authentication required" as const;
 const INVALID_REQUEST = "Invalid request body" as const;
+const INSUFFICIENT_CREDITS = "Insufficient credits" as const;
 
-async function authenticatedUser(req: express.Request, res: express.Response): Promise<{ id: string; username: string; avatarUrl: string | null } | null> {
+async function authenticatedUser(req: express.Request, res: express.Response): Promise<{ id: string; username: string; avatarUrl: string | null; credits: number; isUnlimited: boolean } | null> {
   const token = extractToken(req);
   const user = await getUserFromToken(token);
   if (!user) {
     res.status(401).json({ error: AUTH_REQUIRED });
     return null;
   }
-  return user;
+  return user as any;
 }
+
+async function deductCredits(userId: string, amount: number) {
+  await withDb(() =>
+    prisma.user.update({
+      where: { id: userId },
+      data: { credits: { decrement: amount } },
+    }),
+  );
+}
+
+const CREDIT_COST = { GitHub: 5, Resume: 10, ATS: 2 };
+
+function safeJsonArray(val: unknown): string[] {
+  if (Array.isArray(val)) return val.map(String);
+  if (typeof val === "string") try { const p = JSON.parse(val); return Array.isArray(p) ? p.map(String) : []; } catch { return []; }
+  return [];
+}
+
+const PRICING_PLANS = [
+  { id: "free", name: "Free", credits: 50, price: 0, popular: false },
+  { id: "starter", name: "Starter", credits: 500, price: 499, popular: true },        // ₹499
+  { id: "pro", name: "Professional", credits: 2000, price: 1499, popular: false },     // ₹1499
+  { id: "unlimited", name: "Unlimited", credits: -1, price: 2999, popular: false },    // ₹2999/mo
+];
 
 app.post("/api/v1/pre-interview/github", sensitiveLimiter, async (req, res) => {
   const user = await authenticatedUser(req, res);
   if (!user) return;
+
+  if (!user.isUnlimited && user.credits < CREDIT_COST.GitHub) {
+    res.status(402).json({ error: INSUFFICIENT_CREDITS });
+    return;
+  }
 
   const parsed = PreInterviewBody.safeParse(req.body);
   if (!parsed.success) {
@@ -346,6 +377,10 @@ app.post("/api/v1/pre-interview/github", sensitiveLimiter, async (req, res) => {
     return;
   }
 
+  if (!user.isUnlimited) {
+    await deductCredits(user.id, CREDIT_COST.GitHub);
+  }
+
   const interview = await withDb(() =>
     prisma.interview.create({
       data: {
@@ -364,10 +399,19 @@ app.post("/api/v1/pre-interview/resume", sensitiveLimiter, async (req, res) => {
   const user = await authenticatedUser(req, res);
   if (!user) return;
 
+  if (!user.isUnlimited && user.credits < CREDIT_COST.Resume) {
+    res.status(402).json({ error: INSUFFICIENT_CREDITS });
+    return;
+  }
+
   const parsed = ResumeInterviewBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0]?.message ?? INVALID_REQUEST });
     return;
+  }
+
+  if (!user.isUnlimited) {
+    await deductCredits(user.id, CREDIT_COST.Resume);
   }
 
   const interview = await withDb(() =>
@@ -602,6 +646,303 @@ app.get("/api/v1/result/:interviewId", sensitiveLimiter, async (req, res) => {
       console.error("Result calculation error for interview:", interviewId);
     }
   }
+});
+
+app.get("/api/v1/pricing", (_req, res) => {
+  res.json({ plans: PRICING_PLANS });
+});
+
+app.get("/api/v1/credits", sensitiveLimiter, async (req, res) => {
+  const user = await authenticatedUser(req, res);
+  if (!user) return;
+
+  const fresh = await withDb(() =>
+    prisma.user.findUnique({
+      where: { id: user.id },
+      select: { credits: true, isUnlimited: true },
+    }),
+  );
+
+  res.json({
+    credits: fresh?.credits ?? 0,
+    isUnlimited: fresh?.isUnlimited ?? false,
+    costs: CREDIT_COST,
+  });
+});
+
+app.post("/api/v1/payments/create-order", sensitiveLimiter, async (req, res) => {
+  const user = await authenticatedUser(req, res);
+  if (!user) return;
+
+  const { tier } = req.body;
+  const plan = PRICING_PLANS.find((p) => p.id === tier);
+  if (!plan || plan.price === 0 || !RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
+    res.status(400).json({ error: "Invalid plan or payments not configured" });
+    return;
+  }
+
+  const auth = Buffer.from(`${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`).toString("base64");
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), 10000);
+
+  try {
+    const rzpRes = await fetch("https://api.razorpay.com/v1/orders", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Basic ${auth}`,
+      },
+      body: JSON.stringify({
+        amount: plan.price * 100,
+        currency: "INR",
+        receipt: `${user.id}_${Date.now()}`,
+        notes: { userId: user.id, tier: plan.id, credits: plan.credits },
+      }),
+      signal: controller.signal,
+    });
+
+    if (!rzpRes.ok) {
+      res.status(502).json({ error: "Failed to create Razorpay order" });
+      return;
+    }
+
+    const order = await rzpRes.json();
+
+    await withDb(() =>
+      prisma.payment.create({
+        data: {
+          userId: user.id,
+          razorpayId: order.id,
+          amount: plan.price,
+          credits: plan.credits,
+          tier: plan.id,
+        },
+      }),
+    );
+
+    res.json({ orderId: order.id, amount: plan.price * 100, key: RAZORPAY_KEY_ID });
+  } finally {
+    clearTimeout(id);
+  }
+});
+
+app.post("/api/v1/payments/verify", sensitiveLimiter, async (req, res) => {
+  const user = await authenticatedUser(req, res);
+  if (!user) return;
+
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+
+  if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+    res.status(400).json({ error: "Missing payment verification fields" });
+    return;
+  }
+
+  const payment = await withDb(() =>
+    prisma.payment.findUnique({ where: { razorpayId: razorpay_order_id } }),
+  );
+
+  if (!payment || payment.userId !== user.id) {
+    res.status(404).json({ error: "Payment not found" });
+    return;
+  }
+
+  const generated = crypto
+    .createHmac("sha256", RAZORPAY_KEY_SECRET)
+    .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+    .digest("hex");
+
+  if (generated !== razorpay_signature) {
+    res.status(400).json({ error: "Invalid signature" });
+    return;
+  }
+
+  await withDb(() =>
+    prisma.payment.update({
+      where: { id: payment.id },
+      data: { status: "captured" },
+    }),
+  );
+
+  const plan = PRICING_PLANS.find((p) => p.id === payment.tier);
+
+  if (plan?.id === "unlimited") {
+    await withDb(() =>
+      prisma.user.update({
+        where: { id: user.id },
+        data: { isUnlimited: true },
+      }),
+    );
+  } else if (plan && plan.credits > 0) {
+    await withDb(() =>
+      prisma.user.update({
+        where: { id: user.id },
+        data: { credits: { increment: plan.credits } },
+      }),
+    );
+  }
+
+  res.json({ ok: true, credits: plan?.credits ?? 0, isUnlimited: plan?.id === "unlimited" });
+});
+
+app.post("/api/v1/ats/check", sensitiveLimiter, async (req, res) => {
+  const user = await authenticatedUser(req, res);
+  if (!user) return;
+
+  if (!user.isUnlimited && user.credits < CREDIT_COST.ATS) {
+    res.status(402).json({ error: "Insufficient credits" });
+    return;
+  }
+
+  const { resumeText, jobDescription } = req.body;
+  if (!resumeText || !jobDescription || resumeText.length > 50000 || jobDescription.length > 10000) {
+    res.status(400).json({ error: "Invalid request body" });
+    return;
+  }
+
+  if (!user.isUnlimited) {
+    await deductCredits(user.id, CREDIT_COST.ATS);
+  }
+
+  const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${GROQ_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "llama-3.3-70b-versatile",
+      messages: [
+        {
+          role: "system",
+          content: `You are an expert ATS (Applicant Tracking System) analyzer. Analyze the resume against the job description and return ONLY valid JSON (no markdown, no code blocks) with this exact structure:
+{
+  "score": <0-100 integer>,
+  "keywordMatches": ["keyword1", "keyword2", ...],
+  "missingSkills": ["skill1", "skill2", ...],
+  "suggestions": "<2-3 sentence improvement suggestion>",
+  "summary": "<1-2 sentence overall assessment>"
+}
+
+Rules:
+- Score: 0-100 based on keyword overlap, role fit, and skill match
+- keywordMatches: Important terms from job description found in resume (max 8)
+- missingSkills: Critical keywords from job description MISSING from resume (max 8)
+- suggestions: Actionable advice to improve the resume for this role
+- summary: Brief overall assessment of resume-job fit`,
+        },
+        {
+          role: "user",
+          content: `JOB DESCRIPTION:\n${jobDescription}\n\nRESUME:\n${resumeText}`,
+        },
+      ],
+      temperature: 0.3,
+      max_tokens: 1024,
+    }),
+  });
+
+  if (!groqRes.ok) {
+    res.status(502).json({ error: "ATS analysis failed" });
+    return;
+  }
+
+  const groqData = await groqRes.json();
+  const raw = groqData.choices?.[0]?.message?.content;
+  if (!raw) {
+    res.status(502).json({ error: "Empty response from LLM" });
+    return;
+  }
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(raw.replace(/```json\s*|```\s*/g, "").trim());
+  } catch {
+    res.status(502).json({ error: "Failed to parse ATS response" });
+    return;
+  }
+
+  const ats = await withDb(() =>
+    prisma.atsCheck.create({
+      data: {
+        userId: user.id,
+        resumeText,
+        jobDescription,
+        score: parsed.score ?? 0,
+        keywordMatches: parsed.keywordMatches ?? [],
+        missingSkills: parsed.missingSkills ?? [],
+        suggestions: parsed.suggestions ?? "",
+        summary: parsed.summary ?? "",
+      },
+    }),
+  );
+
+  res.json({
+    id: ats.id,
+    score: parsed.score ?? 0,
+    keywordMatches: parsed.keywordMatches ?? [],
+    missingSkills: parsed.missingSkills ?? [],
+    suggestions: parsed.suggestions ?? "",
+    summary: parsed.summary ?? "",
+    resumeText,
+    jobDescription,
+  });
+});
+
+app.get("/api/v1/ats/history", sensitiveLimiter, async (req, res) => {
+  const user = await authenticatedUser(req, res);
+  if (!user) return;
+
+  const checks = await withDb(() =>
+    prisma.atsCheck.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    }),
+  );
+
+  res.json({
+    checks: checks.map((c) => ({
+      id: c.id,
+      score: c.score,
+      summary: c.summary,
+      keywordMatches: safeJsonArray(c.keywordMatches),
+      missingSkills: safeJsonArray(c.missingSkills),
+      createdAt: c.createdAt,
+    })),
+  });
+});
+
+app.get("/api/v1/ats/:id", sensitiveLimiter, async (req, res) => {
+  const user = await authenticatedUser(req, res);
+  if (!user) return;
+
+  const id = req.params.id as string;
+  if (!id || id.length > 100 || !/^[a-zA-Z0-9-]+$/.test(id)) {
+    res.status(400).json({ error: "Invalid ID" });
+    return;
+  }
+
+  const check = await withDb(() =>
+    prisma.atsCheck.findFirst({
+      where: { id, userId: user.id },
+    }),
+  );
+
+  if (!check) {
+    res.status(404).json({ error: "Check not found" });
+    return;
+  }
+
+  res.json({
+    id: check.id,
+    score: check.score,
+    keywordMatches: safeJsonArray(check.keywordMatches),
+    missingSkills: safeJsonArray(check.missingSkills),
+    suggestions: check.suggestions,
+    summary: check.summary,
+    resumeText: check.resumeText,
+    jobDescription: check.jobDescription,
+    createdAt: check.createdAt,
+  });
 });
 
 app.use((_req, res) => {

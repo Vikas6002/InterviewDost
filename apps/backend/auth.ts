@@ -87,7 +87,9 @@ authRouter.get("/github/callback", async (req, res) => {
         data: {
           githubId: String(githubUser.id),
           username: String(githubUser.login).slice(0, 100),
-          avatarUrl: githubUser.avatar_url ? String(githubUser.avatar_url).slice(0, 500) : "",
+          avatarUrl: githubUser.avatar_url
+            ? String(githubUser.avatar_url).slice(0, 500)
+            : "",
         },
       }),
     );

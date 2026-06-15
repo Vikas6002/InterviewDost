@@ -108,7 +108,9 @@ export function Interview() {
           sttReady = true;
           dgWs.onmessage = handleSttMessage;
 
-          const mediaRecorder = new MediaRecorder(ms, { mimeType: "audio/webm" });
+          const mediaRecorder = new MediaRecorder(ms, {
+            mimeType: "audio/webm",
+          });
           recorderRef.current = mediaRecorder;
           mediaRecorder.start(250);
           mediaRecorder.addEventListener("dataavailable", (event) => {
@@ -123,14 +125,14 @@ export function Interview() {
         if (transcript && received.speech_final && !processingRef.current) {
           processingRef.current = true;
           backendWsRef.current?.send(
-            JSON.stringify({ type: "user_message", text: transcript })
+            JSON.stringify({ type: "user_message", text: transcript }),
           );
         }
       }
 
       const backendWsUrl = BACKEND_URL.replace(/^http/, "ws");
       const bWs = new WebSocket(
-        `${backendWsUrl}/api/v1/ws?interviewId=${interviewId}`
+        `${backendWsUrl}/api/v1/ws?interviewId=${interviewId}`,
       );
       backendWsRef.current = bWs;
 
@@ -213,7 +215,9 @@ export function Interview() {
         {status === "connecting" ? (
           <div className="flex flex-col items-center gap-3 text-muted-foreground">
             <Loader2 className="size-7 animate-spin" />
-            <p className="text-sm">Setting up your interview & microphone\u2026</p>
+            <p className="text-sm">
+              Setting up your interview & microphone\u2026
+            </p>
           </div>
         ) : (
           <div className="flex w-full max-w-3xl items-center justify-center gap-12 sm:gap-24">

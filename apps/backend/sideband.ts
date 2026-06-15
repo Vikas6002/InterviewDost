@@ -11,7 +11,7 @@ export async function getGroqChatCompletion(
     prisma.interview.findFirst({
       where: { id: interviewId },
       include: { conversations: { orderBy: { createdAt: "asc" } } },
-    })
+    }),
   );
   if (!interview) throw new Error("Interview not found");
 
@@ -71,7 +71,7 @@ CRITICAL RULES - FOLLOW THESE EXACTLY:
   await withDb(() =>
     prisma.message.create({
       data: { interviewId, type: "Assistant", message: content },
-    })
+    }),
   );
 
   return content;

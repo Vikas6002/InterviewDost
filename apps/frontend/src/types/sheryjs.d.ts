@@ -1,4 +1,4 @@
-declare module "sheryjs/dist/Shery.js" {
+declare module "sheryjs" {
   interface SheryConfig {
     skew?: boolean;
     ease?: string;
@@ -28,7 +28,10 @@ declare module "sheryjs/dist/Shery.js" {
     makeMagnet: (selector: string, config?: SheryMagnetConfig) => void;
     textAnimate: (selector: string, config?: SheryTextAnimateConfig) => void;
     imageMasker: (selector: string, config?: Record<string, unknown>) => void;
-    hoverWithMediaCircle: (selector: string, config?: Record<string, unknown>) => void;
+    hoverWithMediaCircle: (
+      selector: string,
+      config?: Record<string, unknown>,
+    ) => void;
     imageEffect: (selector: string, config?: Record<string, unknown>) => void;
   };
 

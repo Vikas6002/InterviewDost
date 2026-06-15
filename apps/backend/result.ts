@@ -24,7 +24,7 @@ Transcript:
 `;
 
 export async function calculateResult(
-  messages: { type: "Assistant" | "User"; message: string; createdAt: Date }[]
+  messages: { type: "Assistant" | "User"; message: string; createdAt: Date }[],
 ) {
   const response = await fetch(GROQ_API_URL, {
     method: "POST",
@@ -39,7 +39,7 @@ export async function calculateResult(
           role: "system",
           content: RESULT_PROMPT.replace(
             "{{USER_TRANSCRIPT}}",
-            JSON.stringify(messages)
+            JSON.stringify(messages),
           ),
         },
       ],

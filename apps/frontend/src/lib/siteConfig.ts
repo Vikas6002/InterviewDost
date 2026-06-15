@@ -5,7 +5,8 @@ export const siteConfig = {
   tagline: "AI-powered technical interview simulator",
   hero: {
     title: ["Master technical", "interviews with AI"],
-    subtitle: "Practice with an AI interviewer that studies your GitHub profile. Real-time voice conversations, tailored questions, and instant feedback. No forms, no scheduling.",
+    subtitle:
+      "Practice with an AI interviewer that studies your GitHub profile. Real-time voice conversations, tailored questions, and instant feedback. No forms, no scheduling.",
   },
   features: [
     {
@@ -40,9 +41,21 @@ export const siteConfig = {
     },
   ],
   steps: [
-    { num: "01", title: "Connect GitHub", desc: "Enter your GitHub profile URL. We analyze your repos to tailor your interview questions." },
-    { num: "02", title: "Start the interview", desc: "Grant microphone access and begin a live voice conversation with the AI interviewer." },
-    { num: "03", title: "Get results", desc: "Receive a score out of 10 and detailed feedback on your performance immediately." },
+    {
+      num: "01",
+      title: "Connect GitHub",
+      desc: "Enter your GitHub profile URL. We analyze your repos to tailor your interview questions.",
+    },
+    {
+      num: "02",
+      title: "Start the interview",
+      desc: "Grant microphone access and begin a live voice conversation with the AI interviewer.",
+    },
+    {
+      num: "03",
+      title: "Get results",
+      desc: "Receive a score out of 10 and detailed feedback on your performance immediately.",
+    },
   ],
   stats: [
     { value: "100%", label: "Voice-based interviews" },
@@ -50,11 +63,29 @@ export const siteConfig = {
     { value: "1", label: "GitHub profile needed" },
   ],
   faq: [
-    { q: "How does the AI interview work?", a: "The AI interviewer asks you technical questions based on your GitHub profile. You respond using your microphone in real time." },
-    { q: "Do I need a microphone?", a: "Yes, the interview is entirely voice-based. We ask for microphone permission before starting." },
-    { q: "How are questions generated?", a: "We analyze your public GitHub repositories and tailor questions to the languages and projects you've worked on." },
-    { q: "How long does an interview take?", a: "Most interviews take 5-10 minutes. The AI asks 3-4 questions and wraps up with feedback." },
-    { q: "Is my data private?", a: "We only read your public GitHub profile and repos. We don't store your audio or share your data." },
-    { q: "Can I retake an interview?", a: "Yes, you can start a new interview anytime. Each session generates fresh questions." },
+    {
+      q: "How does the AI interview work?",
+      a: "The AI interviewer asks you technical questions based on your GitHub profile. You respond using your microphone in real time.",
+    },
+    {
+      q: "Do I need a microphone?",
+      a: "Yes, the interview is entirely voice-based. We ask for microphone permission before starting.",
+    },
+    {
+      q: "How are questions generated?",
+      a: "We analyze your public GitHub repositories and tailor questions to the languages and projects you've worked on.",
+    },
+    {
+      q: "How long does an interview take?",
+      a: "Most interviews take 5-10 minutes. The AI asks 3-4 questions and wraps up with feedback.",
+    },
+    {
+      q: "Is my data private?",
+      a: "We only read your public GitHub profile and repos. We don't store your audio or share your data.",
+    },
+    {
+      q: "Can I retake an interview?",
+      a: "Yes, you can start a new interview anytime. Each session generates fresh questions.",
+    },
   ],
 };

@@ -46,8 +46,8 @@ export function Form() {
           InterviewDost
         </h1>
         <p className="mt-4 max-w-md text-balance text-base text-muted-foreground">
-          Drop your GitHub profile and start a live, voice-driven interview tailored to
-          your work. Get instant feedback when you're done.
+          Drop your GitHub profile and start a live, voice-driven interview
+          tailored to your work. Get instant feedback when you're done.
         </p>
 
         <div className="mt-10 w-full">

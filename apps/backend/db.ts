@@ -31,7 +31,11 @@ export async function withDb<T>(fn: () => Promise<T>): Promise<T> {
     } catch (e: unknown) {
       lastErr = e;
       const msg = (e as Error).message ?? "";
-      if (msg.includes("Connection terminated") || msg.includes("socket") || msg.includes("timeout")) {
+      if (
+        msg.includes("Connection terminated") ||
+        msg.includes("socket") ||
+        msg.includes("timeout")
+      ) {
         if (i < MAX_RETRIES - 1) {
           await new Promise((r) => setTimeout(r, 200 * (i + 1)));
           continue;

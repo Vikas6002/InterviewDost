@@ -12,7 +12,7 @@
     "three": "^0.184.0"
   },
   "devDependencies": {
-    "prettier": "^3.7.4",
+    "prettier": "^3.8.4",
     "turbo": "^2.9.12",
     "typescript": "5.9.2"
   },

@@ -1,4 +1,4 @@
-import "styles/globals.css"
+import "styles/globals.css";
 import { Landing } from "./components/Landing";
 import { Login } from "./components/Login";
 import { Form } from "./components/Form";
@@ -22,15 +22,30 @@ export function App() {
         <Routes>
           <Route path="/" element={<Landing />} />
           <Route path="/login" element={<Login />} />
-          <Route path="/interview" element={
-            <ProtectedRoute><Form /></ProtectedRoute>
-          } />
-          <Route path="/interview/:interviewId" element={
-            <ProtectedRoute><Interview /></ProtectedRoute>
-          } />
-          <Route path="/result/:interviewId" element={
-            <ProtectedRoute><Result /></ProtectedRoute>
-          } />
+          <Route
+            path="/interview"
+            element={
+              <ProtectedRoute>
+                <Form />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/interview/:interviewId"
+            element={
+              <ProtectedRoute>
+                <Interview />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/result/:interviewId"
+            element={
+              <ProtectedRoute>
+                <Result />
+              </ProtectedRoute>
+            }
+          />
         </Routes>
         <Toaster position="bottom-left" />
       </AuthProvider>

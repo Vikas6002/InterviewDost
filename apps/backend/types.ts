@@ -12,16 +12,10 @@ export const PreInterviewBody = z.object({
 });
 
 export const TTSBody = z.object({
-  text: z
-    .string()
-    .min(1, "Text is required")
-    .max(500, "Text too long")
+  text: z.string().min(1, "Text is required").max(500, "Text too long"),
 });
 
 export const WSMessageSchema = z.object({
   type: z.enum(["user_message"]),
-  text: z
-    .string()
-    .min(1)
-    .max(2000, "Message too long"),
+  text: z.string().min(1).max(2000, "Message too long"),
 });

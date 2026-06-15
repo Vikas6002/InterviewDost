@@ -16,28 +16,44 @@ import { authRouter } from "./auth";
 
 const app = express();
 
-app.use(helmet({
-  contentSecurityPolicy: NODE_ENV === "production" ? {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"],
-      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-      fontSrc: ["'self'", "https://fonts.gstatic.com"],
-      connectSrc: ["'self'", FRONTEND_URL, "wss://api.deepgram.com"],
-      imgSrc: ["'self'", "data:", "https://*.githubusercontent.com", "https://images.unsplash.com"],
-      frameSrc: ["'none'"],
-      objectSrc: ["'none'"],
-    },
-  } : false,
-}));
+app.use(
+  helmet({
+    contentSecurityPolicy:
+      NODE_ENV === "production"
+        ? {
+            directives: {
+              defaultSrc: ["'self'"],
+              scriptSrc: ["'self'", "'unsafe-inline'"],
+              styleSrc: [
+                "'self'",
+                "'unsafe-inline'",
+                "https://fonts.googleapis.com",
+              ],
+              fontSrc: ["'self'", "https://fonts.gstatic.com"],
+              connectSrc: ["'self'", FRONTEND_URL, "wss://api.deepgram.com"],
+              imgSrc: [
+                "'self'",
+                "data:",
+                "https://*.githubusercontent.com",
+                "https://images.unsplash.com",
+              ],
+              frameSrc: ["'none'"],
+              objectSrc: ["'none'"],
+            },
+          }
+        : false,
+  }),
+);
 
-app.use(cors({
-  origin: FRONTEND_URL,
-  credentials: true,
-  methods: ["GET", "POST"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-  maxAge: 600,
-}));
+app.use(
+  cors({
+    origin: FRONTEND_URL,
+    credentials: true,
+    methods: ["GET", "POST"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    maxAge: 600,
+  }),
+);
 
 app.use(express.json({ limit: "100kb" }));
 app.use(cookieParser());
@@ -125,7 +141,16 @@ server.on("upgrade", (request, socket, head) => {
       });
 
       dgWs.on("open", () => {
-        dgWs.send(JSON.stringify({ type: "Settings", configuration: { encoding: "linear16", sample_rate: 16000, channels: 1 } }));
+        dgWs.send(
+          JSON.stringify({
+            type: "Settings",
+            configuration: {
+              encoding: "linear16",
+              sample_rate: 16000,
+              channels: 1,
+            },
+          }),
+        );
         clientWs.send(JSON.stringify({ type: "connected" }));
       });
 
@@ -190,7 +215,9 @@ wss.on("connection", async (ws) => {
       ws.send(JSON.stringify({ type: "ai_message", text: greeting }));
     } catch (error) {
       console.error("Greeting error:", error);
-      ws.send(JSON.stringify({ type: "error", message: "Failed to start interview" }));
+      ws.send(
+        JSON.stringify({ type: "error", message: "Failed to start interview" }),
+      );
     }
   }
 
@@ -199,7 +226,9 @@ wss.on("connection", async (ws) => {
       const raw = JSON.parse(data.toString());
       const parsed = WSMessageSchema.safeParse(raw);
       if (!parsed.success) {
-        ws.send(JSON.stringify({ type: "error", message: "Invalid message format" }));
+        ws.send(
+          JSON.stringify({ type: "error", message: "Invalid message format" }),
+        );
         return;
       }
 
@@ -216,7 +245,9 @@ wss.on("connection", async (ws) => {
       ws.send(JSON.stringify({ type: "ai_message", text: aiText }));
     } catch (error) {
       console.error("WebSocket message error:", error);
-      ws.send(JSON.stringify({ type: "error", message: "Failed to process message" }));
+      ws.send(
+        JSON.stringify({ type: "error", message: "Failed to process message" }),
+      );
     }
   });
 
@@ -268,7 +299,11 @@ app.post("/api/v1/pre-interview", sensitiveLimiter, async (req, res) => {
 
   const parsed = PreInterviewBody.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid request body" });
+    res
+      .status(400)
+      .json({
+        error: parsed.error.issues[0]?.message ?? "Invalid request body",
+      });
     return;
   }
 
@@ -284,7 +319,9 @@ app.post("/api/v1/pre-interview", sensitiveLimiter, async (req, res) => {
   const githubData = await scrapeGithub(githubUsername);
 
   if (!githubData || (Array.isArray(githubData) && githubData.length === 0)) {
-    res.status(404).json({ error: "GitHub profile not found or has no public repos" });
+    res
+      .status(404)
+      .json({ error: "GitHub profile not found or has no public repos" });
     return;
   }
 
@@ -309,7 +346,10 @@ app.get("/api/v1/result/:interviewId", sensitiveLimiter, async (req, res) => {
     return;
   }
 
-  if (typeof req.params.interviewId !== "string" || req.params.interviewId.length > 100) {
+  if (
+    typeof req.params.interviewId !== "string" ||
+    req.params.interviewId.length > 100
+  ) {
     res.status(400).json({ error: "Invalid interview ID" });
     return;
   }
@@ -332,11 +372,13 @@ app.get("/api/v1/result/:interviewId", sensitiveLimiter, async (req, res) => {
   res.json({
     score: interview.score,
     feedback: interview.feedback,
-    transcript: interview.conversations.map((c: { type: string; message: string; createdAt: Date }) => ({
-      type: c.type,
-      content: c.message,
-      createdAt: c.createdAt,
-    })),
+    transcript: interview.conversations.map(
+      (c: { type: string; message: string; createdAt: Date }) => ({
+        type: c.type,
+        content: c.message,
+        createdAt: c.createdAt,
+      }),
+    ),
     status: interview.status,
   });
 
@@ -346,7 +388,11 @@ app.get("/api/v1/result/:interviewId", sensitiveLimiter, async (req, res) => {
       await withDb(() =>
         prisma.interview.update({
           where: { id: req.params.interviewId },
-          data: { status: "Done", feedback: result.feedback, score: result.score },
+          data: {
+            status: "Done",
+            feedback: result.feedback,
+            score: result.score,
+          },
         }),
       );
     } catch (error) {

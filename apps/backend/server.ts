@@ -10,6 +10,7 @@ import pg from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "./generated/prisma/client.js";
 import { Router } from "express";
+import { WebSocketServer, WebSocket as WsWebSocket } from "ws";
 
 const PORT = Number(process.env.PORT ?? 3001);
 
@@ -73,6 +74,14 @@ const globalLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100, message: {
 app.use(globalLimiter);
 const sensitiveLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 30, message: { error: "Too many requests" }, standardHeaders: true, legacyHeaders: false });
 
+const CREDIT_COST = { GitHub: 5, Resume: 10, ATS: 2 };
+const PRICING_PLANS = [
+  { id: "free", name: "Free", credits: 50, price: 0, popular: false },
+  { id: "starter", name: "Starter", credits: 500, price: 499, popular: true },
+  { id: "pro", name: "Professional", credits: 2000, price: 1499, popular: false },
+  { id: "unlimited", name: "Unlimited", credits: -1, price: 2999, popular: false },
+];
+
 function generateToken(): string { return crypto.randomBytes(48).toString("hex"); }
 const TOKEN_HEADER_REGEX = /^Bearer\s+(.+)$/;
 function extractToken(req: express.Request): string | null {
@@ -90,8 +99,17 @@ async function getUserFromToken(token: string | null | undefined) {
 async function authenticatedUser(req: express.Request, res: express.Response): Promise<any | null> {
   const token = extractToken(req);
   const user = await getUserFromToken(token);
-  if (!user) { res.status(401).json({ error: "Unauthorized" }); return null; }
+  if (!user) { res.status(401).json({ error: "Authentication required" }); return null; }
   return user;
+}
+async function deductCredits(userId: string, amount: number) {
+  await withDb(() => prisma.user.update({ where: { id: userId }, data: { credits: { decrement: amount } } }));
+}
+
+function safeJsonArray(val: unknown): string[] {
+  if (Array.isArray(val)) return val.map(String);
+  if (typeof val === "string") try { const p = JSON.parse(val); return Array.isArray(p) ? p.map(String) : []; } catch { return []; }
+  return [];
 }
 
 const authRouter = Router();
@@ -153,13 +171,300 @@ authRouter.get("/me", async (req, res) => {
 app.use("/api/v1/auth", authRouter);
 
 const server = createServer(app);
+const wss = new WebSocketServer({ noServer: true });
 
-const PRICING_PLANS = [
-  { id: "free", name: "Free", credits: 50, price: 0, popular: false },
-  { id: "starter", name: "Starter", credits: 500, price: 499, popular: true },
-  { id: "pro", name: "Professional", credits: 2000, price: 1499, popular: false },
-  { id: "unlimited", name: "Unlimited", credits: -1, price: 2999, popular: false },
-];
+server.on("upgrade", async (request, socket, head) => {
+  const url = new URL(request.url!, `http://${request.headers.host}`);
+
+  if (url.pathname === "/api/v1/ws") {
+    socket.on("error", () => {});
+    const token = extractToken({ headers: request.headers } as any);
+    if (!token) { socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n"); socket.destroy(); return; }
+    const user = await getUserFromToken(token);
+    if (!user) { socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n"); socket.destroy(); return; }
+
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      ws.on("error", () => {});
+      (ws as any).interviewId = url.searchParams.get("interviewId");
+      (ws as any).userId = user.id;
+      wss.emit("connection", ws, request);
+    });
+    return;
+  }
+
+  if (url.pathname === "/api/v1/stt") {
+    wss.handleUpgrade(request, socket, head, (clientWs) => {
+      clientWs.on("error", () => {});
+      const dgWs = new WsWebSocket("wss://api.deepgram.com/v1/listen", {
+        headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` },
+      });
+      dgWs.on("open", () => {
+        dgWs.send(JSON.stringify({ type: "Settings", configuration: { encoding: "linear16", sample_rate: 16000, channels: 1 } }));
+        clientWs.send(JSON.stringify({ type: "connected" }));
+      });
+      dgWs.on("message", (data) => { if (clientWs.readyState === WsWebSocket.OPEN) clientWs.send(data); });
+      dgWs.on("error", () => {});
+      dgWs.on("close", () => { if (clientWs.readyState === WsWebSocket.OPEN) clientWs.close(); });
+      clientWs.on("message", (data) => { if (dgWs.readyState === WsWebSocket.OPEN) dgWs.send(data); });
+      clientWs.on("close", () => { if (dgWs.readyState === WsWebSocket.OPEN) dgWs.close(); });
+    });
+    return;
+  }
+
+  socket.destroy();
+});
+
+wss.on("connection", async (ws) => {
+  const interviewId = (ws as any).interviewId as string;
+  const userId = (ws as any).userId as string;
+
+  if (!interviewId) { ws.close(4000, "Missing interviewId"); return; }
+
+  const interview = await withDb(() => prisma.interview.findUnique({ where: { id: interviewId } }));
+  if (!interview || interview.userId !== userId) { ws.close(4001, "Unauthorized"); return; }
+
+  const messages = await withDb(() => prisma.message.findMany({ where: { interviewId }, orderBy: { createdAt: "asc" } }));
+  if (messages.length === 0) {
+    try { const greeting = await getGroqChatCompletion(interviewId); ws.send(JSON.stringify({ type: "ai_message", text: greeting })); }
+    catch { ws.send(JSON.stringify({ type: "error", message: "Failed to start interview" })); }
+  }
+
+  ws.on("message", async (data) => {
+    try {
+      const raw = JSON.parse(data.toString());
+      if (raw.type !== "user_message" || !raw.text || typeof raw.text !== "string") {
+        ws.send(JSON.stringify({ type: "error", message: "Invalid message format" }));
+        return;
+      }
+      const sanitized = raw.text.replace(/<[^>]*>/g, "").slice(0, 2000);
+      await withDb(() => prisma.message.create({ data: { interviewId, type: "User", message: sanitized } }));
+      const aiText = await getGroqChatCompletion(interviewId);
+      ws.send(JSON.stringify({ type: "ai_message", text: aiText }));
+    } catch { ws.send(JSON.stringify({ type: "error", message: "Failed to process message" })); }
+  });
+
+  ws.on("close", () => {});
+});
+
+async function getGroqChatCompletion(interviewId: string): Promise<string> {
+  const interview = await withDb(() => prisma.interview.findFirst({ where: { id: interviewId }, include: { conversations: { orderBy: { createdAt: "asc" } } } }));
+  if (!interview) throw new Error("Interview not found");
+
+  const contextBlock = interview.type === "GitHub" && interview.githubMetadata
+    ? `Here is the candidate's GitHub metadata for context:\n${interview.githubMetadata}`
+    : interview.type === "Resume" && interview.resumeText && interview.jobRole
+      ? `Here is the candidate's resume:\n${interview.resumeText}\n\nJob role they're applying for:\n${interview.jobRole}`
+      : "No additional context available.";
+
+  const systemMsg = {
+    role: "system",
+    content: `You are an AI interviewer conducting a technical interview. Use English only.\n\n${contextBlock}\n\nCRITICAL RULES - FOLLOW THESE EXACTLY:\n1. Ask ONLY ONE question at a time. Never ask multiple questions in a single message.\n2. Start with a brief greeting and ONE opening question.\n3. Wait for the candidate's answer before asking the next question.\n4. Keep your responses SHORT - at most 2-3 sentences.\n5. If the candidate gives a short or unclear answer, ask a friendly follow-up to help them elaborate.\n6. Do NOT repeat the same question if it wasn't answered. Instead, rephrase it gently.\n7. After the candidate answers, acknowledge their response briefly, then ask ONE follow-up or move to the next topic.\n8. Ask 3-4 questions total, one at a time. After the last answer, thank them and wrap up.`,
+  };
+
+  const msgs = [systemMsg, ...interview.conversations.map((c) => ({ role: c.type === "User" ? "user" : "assistant", content: c.message }))];
+
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${GROQ_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages: msgs, temperature: 0.7, max_tokens: 2048 }),
+  });
+  if (!res.ok) { const err = await res.text().catch(() => ""); throw new Error(`Groq API error (${res.status}): ${err}`); }
+  const data = await res.json();
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) throw new Error("Empty response from Groq");
+
+  await withDb(() => prisma.message.create({ data: { interviewId, type: "Assistant", message: content } }));
+  return content;
+}
+
+async function calculateResult(messages: { type: "Assistant" | "User"; message: string; createdAt: Date }[], context?: { type: "GitHub" | "Resume"; jobRole?: string | null; githubMetadata?: any; resumeText?: string | null }) {
+  const interviewContextStr = context ? `Type: ${context.type}${context.jobRole ? `, Job Description Provided` : ""}${context.type === "GitHub" && context.githubMetadata ? `, GitHub Repos analyzed` : ""}` : "General interview";
+  const prompt = `You are an expert evaluator. Your job is to evaluate the user's interview. Give them a score out of 10 and also let them know any feedback you have about their interview.\n\nInterview context: ${interviewContextStr}\n\nPlease return only a JSON object with the following structure (no other text):\n{\n    "feedback": "your feedback here",\n    "score": <number between 0 and 10>\n}\n\nTranscript:\n${JSON.stringify(messages)}`;
+
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${GROQ_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages: [{ role: "system", content: prompt }], temperature: 0.3, max_tokens: 1024 }),
+  });
+  if (!res.ok) throw new Error(`Groq API error (${res.status})`);
+  const data = await res.json();
+  const text = data.choices?.[0]?.message?.content;
+  if (!text) throw new Error("Empty response from Groq");
+  const cleaned = text.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+  const result = JSON.parse(cleaned);
+  if (typeof result.score !== "number" || typeof result.feedback !== "string") throw new Error("Invalid result format");
+  return { score: Math.max(0, Math.min(10, Math.round(result.score))), feedback: result.feedback.slice(0, 5000) };
+}
+
+async function scrapeGithub(username: string) {
+  const res = await fetch(`https://api.github.com/users/${username}/repos`);
+  if (!res.ok) return [];
+  const data: any = await res.json();
+  return data.map((x: any) => ({ description: x.description, name: x.name, fullName: x.full_name, starCount: x.stargazers_count }));
+}
+
+app.post("/api/v1/tts", sensitiveLimiter, async (req, res) => {
+  const { text } = req.body;
+  if (!text || typeof text !== "string" || text.length < 1 || text.length > 500) { res.status(400).json({ error: "Invalid request body" }); return; }
+  try {
+    const c = new AbortController(); const t = setTimeout(() => c.abort(), 10000);
+    const response = await fetch("https://api.deepgram.com/v1/speak", {
+      method: "POST",
+      headers: { Authorization: `Token ${DEEPGRAM_API_KEY}`, "Content-Type": "application/json", Accept: "audio/mpeg" },
+      body: JSON.stringify({ text }),
+      signal: c.signal,
+    });
+    clearTimeout(t);
+    if (!response.ok) { res.status(502).json({ error: "TTS service error" }); return; }
+    const audioBuffer = await response.arrayBuffer();
+    res.set("Content-Type", "audio/mpeg");
+    res.set("X-Content-Type-Options", "nosniff");
+    res.send(Buffer.from(audioBuffer));
+  } catch (error: unknown) {
+    const msg = (error as Error).message ?? "";
+    if (msg.includes("abort")) res.status(504).json({ error: "TTS request timed out" });
+    else res.status(500).json({ error: "TTS failed" });
+  }
+});
+
+app.post("/api/v1/pre-interview/github", sensitiveLimiter, async (req, res) => {
+  const user = await authenticatedUser(req, res);
+  if (!user) return;
+  if (!user.isUnlimited && user.credits < CREDIT_COST.GitHub) { res.status(402).json({ error: "Insufficient credits" }); return; }
+
+  const { github } = req.body;
+  if (!github || typeof github !== "string" || !/^https?:\/\/(www\.)?github\.com\/[a-zA-Z0-9_-]+\/?$/.test(github)) {
+    res.status(400).json({ error: "Valid GitHub profile URL required" }); return;
+  }
+
+  const githubUsername = github.replace(/\/$/, "").split("/").pop()!;
+  if (!/^[a-zA-Z0-9_-]+$/.test(githubUsername)) { res.status(400).json({ error: "Invalid GitHub username" }); return; }
+
+  const c = new AbortController(); const t = setTimeout(() => c.abort(), 15000);
+  let githubData;
+  try { githubData = await scrapeGithub(githubUsername); } finally { clearTimeout(t); }
+  if (!githubData || githubData.length === 0) { res.status(404).json({ error: "GitHub profile not found or has no public repos" }); return; }
+
+  if (!user.isUnlimited) await deductCredits(user.id, CREDIT_COST.GitHub);
+
+  const interview = await withDb(() => prisma.interview.create({ data: { userId: user.id, type: "GitHub", githubMetadata: JSON.stringify(githubData), status: "Pre" } }));
+  res.status(201).json({ id: interview.id });
+});
+
+app.post("/api/v1/pre-interview/resume", sensitiveLimiter, async (req, res) => {
+  const user = await authenticatedUser(req, res);
+  if (!user) return;
+  if (!user.isUnlimited && user.credits < CREDIT_COST.Resume) { res.status(402).json({ error: "Insufficient credits" }); return; }
+
+  const { resumeText, jobRole } = req.body;
+  if (!resumeText || !jobRole || typeof resumeText !== "string" || typeof jobRole !== "string" || resumeText.length > 50000 || jobRole.length > 10000) {
+    res.status(400).json({ error: "Invalid request body" }); return;
+  }
+
+  if (!user.isUnlimited) await deductCredits(user.id, CREDIT_COST.Resume);
+
+  const interview = await withDb(() => prisma.interview.create({ data: { userId: user.id, type: "Resume", jobRole, resumeText, status: "Pre" } }));
+  res.status(201).json({ id: interview.id });
+});
+
+app.get("/api/v1/interviews", sensitiveLimiter, async (req, res) => {
+  const user = await authenticatedUser(req, res);
+  if (!user) return;
+  const interviews = await withDb(() => prisma.interview.findMany({ where: { userId: user.id }, orderBy: { createdAt: "desc" }, include: { conversations: true } }));
+  res.json({
+    interviews: interviews.map((i) => ({
+      id: i.id, type: i.type, score: i.score, feedback: i.feedback, status: i.status, jobRole: i.jobRole, createdAt: i.createdAt, messageCount: i.conversations.length,
+    })),
+  });
+});
+
+app.get("/api/v1/dashboard/stats", sensitiveLimiter, async (req, res) => {
+  const user = await authenticatedUser(req, res);
+  if (!user) return;
+  const interviews = await withDb(() => prisma.interview.findMany({ where: { userId: user.id }, orderBy: { createdAt: "asc" } }));
+  const completed = interviews.filter((i) => i.status === "Done");
+  const totalScore = completed.reduce((sum, i) => sum + i.score, 0);
+  const averageScore = completed.length > 0 ? Math.round((totalScore / completed.length) * 10) / 10 : 0;
+  res.json({
+    totalInterviews: interviews.length,
+    completedInterviews: completed.length,
+    averageScore,
+    scoresOverTime: completed.map((i) => ({ date: i.createdAt.toISOString(), score: i.score, type: i.type })),
+    typeBreakdown: { github: interviews.filter((i) => i.type === "GitHub").length, resume: interviews.filter((i) => i.type === "Resume").length },
+    statusCount: { completed: completed.length, inProgress: interviews.filter((i) => i.status === "InProgress").length, pre: interviews.filter((i) => i.status === "Pre").length },
+  });
+});
+
+app.get("/api/v1/analytics", sensitiveLimiter, async (req, res) => {
+  const user = await authenticatedUser(req, res);
+  if (!user) return;
+  const interviews = await withDb(() => prisma.interview.findMany({ where: { userId: user.id, status: "Done" }, orderBy: { createdAt: "asc" } }));
+
+  const totalCompleted = interviews.length;
+  const scoreList = interviews.map((i) => i.score);
+  const bestScore = scoreList.length > 0 ? Math.max(...scoreList) : 0;
+  const avgScore = scoreList.length > 0 ? Math.round((scoreList.reduce((a, b) => a + b, 0) / scoreList.length) * 10) / 10 : 0;
+  const recentAvg = scoreList.slice(-3).length > 0 ? Math.round((scoreList.slice(-3).reduce((a, b) => a + b, 0) / scoreList.slice(-3).length) * 10) / 10 : 0;
+  const improvement = scoreList.length >= 2 ? Math.round(((scoreList[scoreList.length - 1] ?? 0) - (scoreList[0] ?? 0)) * 10) / 10 : 0;
+
+  const skillKeywords: Record<string, RegExp> = {
+    "Data Structures": /array|linked list|stack|queue|tree|graph|hash|heap|trie/i,
+    Algorithms: /sort|search|recursion|dp|dynamic.program|greedy|backtrack|divide|conquer/i,
+    "System Design": /scalab|distributed|microservice|load.balanc|cache|database.shard|consistenthash/i,
+    Databases: /sql|nosql|index|query|normaliz|transaction|acid|mongodb|postgres|mysql/i,
+    "Web Dev": /react|api|rest|graphql|http|frontend|backend|full.stack|express|next/i,
+    "Problem Solving": /complexity|optimize|refactor|edge.case|brute.force|efficient/i,
+  };
+
+  const skillScores: Record<string, number[]> = {};
+  for (const key of Object.keys(skillKeywords)) skillScores[key] = [];
+  for (const interview of interviews) {
+    const combined = `${interview.feedback ?? ""} ${interview.jobRole ?? ""} ${interview.resumeText ?? ""}`;
+    for (const [skill, regex] of Object.entries(skillKeywords)) {
+      if (regex.test(combined)) (skillScores[skill] ?? (skillScores[skill] = [])).push(interview.score);
+    }
+  }
+
+  res.json({
+    totalCompleted, bestScore, averageScore: avgScore, recentAverage: recentAvg, improvement, scoreList,
+    radarData: Object.entries(skillScores).map(([skill, scores]) => ({ skill, score: scores.length > 0 ? Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10 : 0, interviews: scores.length })).sort((a, b) => b.score - a.score),
+    feedbacks: interviews.filter((i) => i.feedback).map((i) => i.feedback!),
+    recentInterviews: interviews.slice(-5).reverse().map((i) => ({ id: i.id, score: i.score, type: i.type, jobRole: i.jobRole, createdAt: i.createdAt })),
+  });
+});
+
+app.get("/api/v1/result/:interviewId", sensitiveLimiter, async (req, res) => {
+  const user = await authenticatedUser(req, res);
+  if (!user) return;
+  const interviewId = req.params.interviewId;
+  if (!interviewId || interviewId.length > 100 || !/^[a-zA-Z0-9-]+$/.test(interviewId)) { res.status(400).json({ error: "Invalid interview ID" }); return; }
+
+  const interview = await withDb(() => prisma.interview.findFirst({ where: { id: interviewId, userId: user.id }, include: { conversations: true } }));
+  if (!interview) { res.status(404).json({ error: "Interview not found" }); return; }
+
+  res.json({
+    score: interview.score,
+    feedback: interview.feedback,
+    transcript: interview.conversations.map((c) => ({ type: c.type, content: c.message, createdAt: c.createdAt })),
+    status: interview.status,
+  });
+
+  if (interview.status !== "Done") {
+    try {
+      const result = await calculateResult(interview.conversations, { type: interview.type as any, jobRole: interview.jobRole, githubMetadata: interview.githubMetadata, resumeText: interview.resumeText });
+      await withDb(() => prisma.interview.update({ where: { id: interviewId }, data: { status: "Done", feedback: result.feedback, score: result.score } }));
+    } catch { console.error("Result calculation error for interview:", interviewId); }
+  }
+});
+
+app.get("/api/v1/pricing", (_req, res) => { res.json({ plans: PRICING_PLANS }); });
+
+app.get("/api/v1/credits", sensitiveLimiter, async (req, res) => {
+  const user = await authenticatedUser(req, res);
+  if (!user) return;
+  const fresh = await withDb(() => prisma.user.findUnique({ where: { id: user.id }, select: { credits: true, isUnlimited: true } }));
+  res.json({ credits: fresh?.credits ?? 0, isUnlimited: fresh?.isUnlimited ?? false, costs: CREDIT_COST });
+});
 
 app.post("/api/v1/payments/create-order", sensitiveLimiter, async (req, res) => {
   const user = await authenticatedUser(req, res);
@@ -171,14 +476,12 @@ app.post("/api/v1/payments/create-order", sensitiveLimiter, async (req, res) => 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 10000);
   try {
-    const shortId = crypto.randomBytes(6).toString("hex");
-    const receipt = `${shortId}_${Date.now()}`.slice(0, 40);
     const rzpRes = await fetch("https://api.razorpay.com/v1/orders", {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: `Basic ${auth}` },
-      body: JSON.stringify({ amount: plan.price * 100, currency: "INR", receipt, notes: { userId: user.id, tier: plan.id, credits: plan.credits } }),
+      body: JSON.stringify({ amount: plan.price * 100, currency: "INR", receipt: `${user.id}_${Date.now()}`, notes: { userId: user.id, tier: plan.id, credits: plan.credits } }),
       signal: controller.signal,
     });
-    if (!rzpRes.ok) { const body = await rzpRes.text().catch(() => ""); console.error("Razorpay error:", rzpRes.status, body); res.status(502).json({ error: "Failed to create Razorpay order" }); return; }
+    if (!rzpRes.ok) { res.status(502).json({ error: "Failed to create Razorpay order" }); return; }
     const order = await rzpRes.json();
     await withDb(() => prisma.payment.create({ data: { userId: user.id, razorpayId: order.id, amount: plan.price, credits: plan.credits, tier: plan.id } }));
     res.json({ orderId: order.id, amount: plan.price * 100, key: RAZORPAY_KEY_ID });
@@ -196,16 +499,18 @@ app.post("/api/v1/payments/verify", sensitiveLimiter, async (req, res) => {
   if (generated !== razorpay_signature) { res.status(400).json({ error: "Invalid signature" }); return; }
   await withDb(() => prisma.payment.update({ where: { id: payment.id }, data: { status: "captured" } }));
   const plan = PRICING_PLANS.find((p) => p.id === payment.tier);
-  if (plan?.id === "unlimited") { await withDb(() => prisma.user.update({ where: { id: user.id }, data: { isUnlimited: true } })); }
-  else if (plan && plan.credits > 0) { await withDb(() => prisma.user.update({ where: { id: user.id }, data: { credits: { increment: plan.credits } } })); }
+  if (plan?.id === "unlimited") await withDb(() => prisma.user.update({ where: { id: user.id }, data: { isUnlimited: true } }));
+  else if (plan && plan.credits > 0) await withDb(() => prisma.user.update({ where: { id: user.id }, data: { credits: { increment: plan.credits } } }));
   res.json({ ok: true, credits: plan?.credits ?? 0, isUnlimited: plan?.id === "unlimited" });
 });
 
 app.post("/api/v1/ats/check", sensitiveLimiter, async (req, res) => {
   const user = await authenticatedUser(req, res);
   if (!user) return;
+  if (!user.isUnlimited && user.credits < CREDIT_COST.ATS) { res.status(402).json({ error: "Insufficient credits" }); return; }
   const { resumeText, jobDescription } = req.body;
   if (!resumeText || !jobDescription || resumeText.length > 50000 || jobDescription.length > 5000) { res.status(400).json({ error: "Invalid input" }); return; }
+  if (!user.isUnlimited) await deductCredits(user.id, CREDIT_COST.ATS);
 
   const escapedResume = resumeText.replace(/<[^>]*>/g, "").slice(0, 30000);
   const escapedJob = jobDescription.replace(/<[^>]*>/g, "").slice(0, 3000);
@@ -252,7 +557,14 @@ app.get("/api/v1/ats", sensitiveLimiter, async (req, res) => {
   const user = await authenticatedUser(req, res);
   if (!user) return;
   const checks = await withDb(() => prisma.atsCheck.findMany({ where: { userId: user.id }, orderBy: { createdAt: "desc" }, take: 50 }));
-  res.json({ checks: checks.map((c: any) => ({ id: c.id, score: c.score, summary: c.summary, keywordMatches: (() => { try { return Array.isArray(c.keywordMatches) ? c.keywordMatches : JSON.parse(c.keywordMatches ?? "[]"); } catch { return []; } })(), missingSkills: (() => { try { return Array.isArray(c.missingSkills) ? c.missingSkills : JSON.parse(c.missingSkills ?? "[]"); } catch { return []; } })(), createdAt: c.createdAt })) });
+  res.json({ checks: checks.map((c) => ({ id: c.id, score: c.score, summary: c.summary, keywordMatches: safeJsonArray(c.keywordMatches), missingSkills: safeJsonArray(c.missingSkills), createdAt: c.createdAt })) });
+});
+
+app.get("/api/v1/ats/history", sensitiveLimiter, async (req, res) => {
+  const user = await authenticatedUser(req, res);
+  if (!user) return;
+  const checks = await withDb(() => prisma.atsCheck.findMany({ where: { userId: user.id }, orderBy: { createdAt: "desc" }, take: 50 }));
+  res.json({ checks: checks.map((c) => ({ id: c.id, score: c.score, summary: c.summary, keywordMatches: safeJsonArray(c.keywordMatches), missingSkills: safeJsonArray(c.missingSkills), createdAt: c.createdAt })) });
 });
 
 app.get("/api/v1/ats/:id", sensitiveLimiter, async (req, res) => {
@@ -262,7 +574,7 @@ app.get("/api/v1/ats/:id", sensitiveLimiter, async (req, res) => {
   if (!id || id.length > 100 || !/^[a-zA-Z0-9-]+$/.test(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
   const check = await withDb(() => prisma.atsCheck.findFirst({ where: { id, userId: user.id } }));
   if (!check) { res.status(404).json({ error: "Check not found" }); return; }
-  res.json({ id: check.id, score: check.score, keywordMatches: (() => { try { return Array.isArray(check.keywordMatches) ? check.keywordMatches : JSON.parse(check.keywordMatches ?? "[]"); } catch { return []; } })(), missingSkills: (() => { try { return Array.isArray(check.missingSkills) ? check.missingSkills : JSON.parse(check.missingSkills ?? "[]"); } catch { return []; } })(), suggestions: check.suggestions, summary: check.summary, resumeText: check.resumeText, jobDescription: check.jobDescription, createdAt: check.createdAt });
+  res.json({ id: check.id, score: check.score, keywordMatches: safeJsonArray(check.keywordMatches), missingSkills: safeJsonArray(check.missingSkills), suggestions: check.suggestions, summary: check.summary, resumeText: check.resumeText, jobDescription: check.jobDescription, createdAt: check.createdAt });
 });
 
 app.get("/api/v1/ping", (_req, res) => res.json({ ok: true }));

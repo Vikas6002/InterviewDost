@@ -178,7 +178,7 @@ server.on("upgrade", async (request, socket, head) => {
 
   if (url.pathname === "/api/v1/ws") {
     socket.on("error", () => {});
-    const token = extractToken({ headers: request.headers } as any);
+    const token = url.searchParams.get("token") || extractToken({ headers: request.headers } as any);
     if (!token) { socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n"); socket.destroy(); return; }
     const user = await getUserFromToken(token);
     if (!user) { socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n"); socket.destroy(); return; }

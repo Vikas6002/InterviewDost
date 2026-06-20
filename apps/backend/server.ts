@@ -195,11 +195,10 @@ server.on("upgrade", async (request, socket, head) => {
   if (url.pathname === "/api/v1/stt") {
     wss.handleUpgrade(request, socket, head, (clientWs) => {
       clientWs.on("error", () => {});
-      const dgWs = new WsWebSocket("wss://api.deepgram.com/v1/listen", {
+      const dgWs = new WsWebSocket("wss://api.deepgram.com/v1/listen?model=nova-2&smart_format=true", {
         headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` },
       });
       dgWs.on("open", () => {
-        dgWs.send(JSON.stringify({ type: "Settings", configuration: { encoding: "linear16", sample_rate: 16000, channels: 1 } }));
         clientWs.send(JSON.stringify({ type: "connected" }));
       });
       dgWs.on("message", (data) => { if (clientWs.readyState === WsWebSocket.OPEN) clientWs.send(data); });
@@ -529,18 +528,18 @@ ${escapedJob}
 
 Respond in JSON format: { "score": number, "keywordMatches": string[], "missingSkills": string[], "suggestions": string[], "summary": string }`;
 
-  const c = new AbortController(); const t = setTimeout(() => c.abort(), 30000);
+  const c = new AbortController(); const t = setTimeout(() => c.abort(), 8000);
   try {
     const aiRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${GROQ_API_KEY}` },
-      body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages: [{ role: "user", content: prompt }], temperature: 0.3, max_tokens: 2000 }),
+      body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages: [{ role: "system", content: "You are an expert ATS checker. Return ONLY valid JSON." }, { role: "user", content: prompt }], temperature: 0.3, max_tokens: 1024 }),
       signal: c.signal,
     });
-    if (!aiRes.ok) { console.error("Groq error:", aiRes.status); res.status(502).json({ error: "AI service unavailable" }); return; }
+    if (!aiRes.ok) { const errText = await aiRes.text().catch(() => ""); console.error("Groq error:", aiRes.status, errText.slice(0, 200)); res.status(502).json({ error: "AI service unavailable" }); return; }
     const aiData: any = await aiRes.json();
     const content = aiData.choices?.[0]?.message?.content ?? "";
     const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) { res.status(502).json({ error: "Invalid AI response" }); return; }
+    if (!jsonMatch) { console.error("ATS: no JSON in Groq response:", content.slice(0, 200)); res.status(502).json({ error: "Invalid AI response" }); return; }
     const parsed = JSON.parse(jsonMatch[0]);
     const score = Math.max(0, Math.min(100, parsed.score ?? 0));
     const keywordMatches = Array.isArray(parsed.keywordMatches) ? parsed.keywordMatches.slice(0, 50).map((k: any) => String(k).slice(0, 200)) : [];

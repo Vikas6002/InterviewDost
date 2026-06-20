@@ -1,6 +1,5 @@
 {
   "name": "backend",
-  "module": "index.ts",
   "type": "module",
   "private": true,
   "devDependencies": {
@@ -18,22 +17,15 @@
     "@prisma/client": "^7.8.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
-    "@types/ws": "^8.18.1",
-    "axios": "^1.16.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
-    "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "express-rate-limit": "^8.5.2",
     "helmet": "^8.2.0",
-    "https-proxy-agent": "^9.0.0",
-    "pg": "^8.20.0",
-    "playwright": "^1.60.0",
-    "ws": "^8.20.1",
-    "zod": "^4.4.3"
+    "pg": "^8.20.0"
   },
   "scripts": {
-    "dev": "bun --hot index.ts",
+    "dev": "bun --hot server.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "postinstall": "prisma generate"

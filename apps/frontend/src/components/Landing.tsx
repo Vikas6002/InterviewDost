@@ -19,7 +19,7 @@ import {
   Sparkles,
   Code,
 } from "lucide-react";
-import Shery from "sheryjs";
+
 import { StarsBackground } from "./ui/stars-background";
 
 gsap.registerPlugin(ScrollTrigger);
@@ -929,13 +929,21 @@ export function Landing() {
   useLenis();
 
   useEffect(() => {
-    Shery.textAnimate(".shery-text", {
-      style: 1,
-      y: 10,
-      delay: 0.05,
-      duration: 0.8,
-      ease: "cubic-bezier(0.23, 1, 0.320, 1)",
-      multiplier: 0.05,
+    document.querySelectorAll(".shery-text").forEach((el) => {
+      const text = el.textContent || "";
+      el.innerHTML = text
+        .split("")
+        .map((c) => `<span class="inline-block">${c === " " ? "&nbsp;" : c}</span>`)
+        .join("");
+      const chars = el.querySelectorAll("span");
+      gsap.from(chars, {
+        y: 10,
+        opacity: 0,
+        duration: 0.8,
+        stagger: 0.05,
+        ease: "cubic-bezier(0.23, 1, 0.320, 1)",
+        scrollTrigger: { trigger: el, start: "top 80%" },
+      });
     });
   }, []);
 

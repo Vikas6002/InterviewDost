@@ -1085,11 +1085,14 @@ app.post("/api/v1/ats/check", sensitiveLimiter, async (req, res) => {
     res.status(400).json({ error: "Invalid input" });
     return;
   }
-  if (!user.isUnlimited) await deductCredits(user.id, CREDIT_COST.ATS);
+  const c = new AbortController();
+  const t = setTimeout(() => c.abort(), 8000);
+  try {
+    if (!user.isUnlimited) await deductCredits(user.id, CREDIT_COST.ATS);
 
-  const escapedResume = resumeText.replace(/<[^>]*>/g, "").slice(0, 30000);
-  const escapedJob = jobDescription.replace(/<[^>]*>/g, "").slice(0, 3000);
-  const prompt = `You are an expert ATS resume checker. Analyze the resume against the job description and provide:
+    const escapedResume = resumeText.replace(/<[^>]*>/g, "").slice(0, 30000);
+    const escapedJob = jobDescription.replace(/<[^>]*>/g, "").slice(0, 3000);
+    const prompt = `You are an expert ATS resume checker. Analyze the resume against the job description and provide:
 1. An overall score (0-100)
 2. List of keyword matches found
 3. Missing important skills/keywords
@@ -1104,9 +1107,6 @@ ${escapedJob}
 
 Respond in JSON format: { "score": number, "keywordMatches": string[], "missingSkills": string[], "suggestions": string[], "summary": string }`;
 
-  const c = new AbortController();
-  const t = setTimeout(() => c.abort(), 8000);
-  try {
     const aiRes = await fetch(
       "https://api.groq.com/openai/v1/chat/completions",
       {

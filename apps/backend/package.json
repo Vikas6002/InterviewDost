@@ -3,6 +3,7 @@
   "type": "module",
   "private": true,
   "devDependencies": {
+    "dotenv": "^17.4.2",
     "@types/bun": "latest",
     "@types/cookie-parser": "^1.4.10",
     "@types/node": "^25.6.2",
@@ -16,6 +17,7 @@
   "dependencies": {
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
+    "@prisma/client-runtime-utils": "^7.8.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "cookie-parser": "^1.4.7",

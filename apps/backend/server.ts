@@ -26,6 +26,7 @@ for (const key of required) {
     throw new Error(`Missing required env variable: ${key}`);
 }
 const GROQ_API_KEY = process.env.GROQ_API_KEY!;
+const GROQ_MODEL = process.env.GROQ_MODEL ?? "openai/gpt-oss-120b";
 const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY!;
 const DATABASE_URL = process.env.DATABASE_URL!;
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID!;
@@ -514,7 +515,7 @@ async function getGroqChatCompletion(interviewId: string): Promise<string> {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "llama-3.3-70b-versatile",
+      model: GROQ_MODEL,
       messages: msgs,
       temperature: 0.7,
       max_tokens: 2048,
@@ -557,7 +558,7 @@ async function calculateResult(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "llama-3.3-70b-versatile",
+      model: GROQ_MODEL,
       messages: [{ role: "system", content: prompt }],
       temperature: 0.3,
       max_tokens: 1024,
@@ -1116,7 +1117,7 @@ Respond in JSON format: { "score": number, "keywordMatches": string[], "missingS
           Authorization: `Bearer ${GROQ_API_KEY}`,
         },
         body: JSON.stringify({
-          model: "llama-3.3-70b-versatile",
+          model: GROQ_MODEL,
           messages: [
             {
               role: "system",
@@ -1125,7 +1126,8 @@ Respond in JSON format: { "score": number, "keywordMatches": string[], "missingS
             { role: "user", content: prompt },
           ],
           temperature: 0.3,
-          max_tokens: 1024,
+          max_tokens: 2048,
+          response_format: { type: "json_object" },
         }),
         signal: c.signal,
       },
@@ -1138,13 +1140,18 @@ Respond in JSON format: { "score": number, "keywordMatches": string[], "missingS
     }
     const aiData: any = await aiRes.json();
     const content = aiData.choices?.[0]?.message?.content ?? "";
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      console.error("ATS: no JSON in Groq response:", content.slice(0, 200));
+    const cleanedContent = content
+      .replace(/^```json\s*/i, "")
+      .replace(/```\s*$/, "")
+      .trim();
+    let parsed: any;
+    try {
+      parsed = JSON.parse(cleanedContent);
+    } catch {
+      console.error("ATS: invalid JSON from Groq:", content.slice(0, 500));
       res.status(502).json({ error: "Invalid AI response" });
       return;
     }
-    const parsed = JSON.parse(jsonMatch[0]);
     const score = Math.max(0, Math.min(100, parsed.score ?? 0));
     const keywordMatches = Array.isArray(parsed.keywordMatches)
       ? parsed.keywordMatches
@@ -1159,6 +1166,7 @@ Respond in JSON format: { "score": number, "keywordMatches": string[], "missingS
     const suggestions = Array.isArray(parsed.suggestions)
       ? parsed.suggestions.slice(0, 10).map((k: any) => String(k).slice(0, 500))
       : [];
+    const suggestionsText = suggestions.join("\n");
     const summary = String(parsed.summary ?? "").slice(0, 1000);
 
     const check = await withDb(() =>
@@ -1168,7 +1176,7 @@ Respond in JSON format: { "score": number, "keywordMatches": string[], "missingS
           score,
           keywordMatches,
           missingSkills,
-          suggestions,
+          suggestions: suggestionsText,
           summary,
           resumeText: escapedResume.slice(0, 10000),
           jobDescription: escapedJob,
@@ -1180,7 +1188,7 @@ Respond in JSON format: { "score": number, "keywordMatches": string[], "missingS
       score,
       keywordMatches,
       missingSkills,
-      suggestions,
+      suggestions: suggestionsText,
       summary,
     });
   } catch (e: any) {

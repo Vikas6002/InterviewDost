@@ -8,59 +8,58 @@ datasource db {
 }
 
 model User {
-  id            String      @id @default(uuid())
-  githubId      String      @unique
-  username      String
-  avatarUrl     String?
-  credits       Int         @default(50)
-  isUnlimited   Boolean     @default(false)
-  createdAt     DateTime    @default(now())
-  interviews    Interview[]
-  sessions      Session[]
-  payments      Payment[]
-  atsChecks     AtsCheck[]
+  id          String      @id @default(uuid())
+  githubId    String      @unique
+  username    String
+  avatarUrl   String?
+  createdAt   DateTime    @default(now())
+  credits     Int         @default(50)
+  isUnlimited Boolean     @default(false)
+  atsChecks   AtsCheck[]
+  interviews  Interview[]
+  payments    Payment[]
+  sessions    Session[]
 }
 
 model Session {
   id        String   @id @default(uuid())
   token     String   @unique @default(uuid())
   userId    String
-  user      User     @relation(fields: [userId], references: [id])
   createdAt DateTime @default(now())
   expiresAt DateTime
+  user      User     @relation(fields: [userId], references: [id])
 }
 
 model Payment {
-  id          String   @id @default(uuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id])
-  razorpayId  String   @unique
-  amount      Int
-  credits     Int
-  tier        String
-  status      String   @default("created")
-  createdAt   DateTime @default(now())
+  id         String   @id @default(uuid())
+  userId     String
+  razorpayId String   @unique
+  amount     Int
+  credits    Int
+  tier       String
+  status     String   @default("created")
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id])
 }
 
 model Interview {
-  id              String     @id @default(uuid())
-  userId          String
-  user            User       @relation(fields: [userId], references: [id])
-  type            InterviewType
-  githubMetadata  Json?
-  jobRole         String?
-  resumeText      String?
-  status          InterviewStatus
-  score           Int       @default(0)
-  conversations   Message[]
-  feedback        String?
-  createdAt       DateTime  @default(now())
+  id             String          @id @default(uuid())
+  githubMetadata Json?
+  status         InterviewStatus
+  score          Int             @default(0)
+  feedback       String?
+  userId         String
+  createdAt      DateTime        @default(now())
+  jobRole        String?
+  resumeText     String?
+  type           InterviewType
+  user           User            @relation(fields: [userId], references: [id])
+  conversations  Message[]
 }
 
 model AtsCheck {
   id             String   @id @default(uuid())
   userId         String
-  user           User     @relation(fields: [userId], references: [id])
   resumeText     String
   jobDescription String
   score          Int
@@ -69,15 +68,16 @@ model AtsCheck {
   suggestions    String
   summary        String
   createdAt      DateTime @default(now())
+  user           User     @relation(fields: [userId], references: [id])
 }
 
 model Message {
-  id          String     @id  @default(uuid())
+  id          String      @id @default(uuid())
   message     String
   type        MessageType
   interviewId String
-  interview   Interview  @relation(fields: [interviewId], references: [id])
-  createdAt   DateTime   @default(now())
+  createdAt   DateTime    @default(now())
+  interview   Interview   @relation(fields: [interviewId], references: [id])
 }
 
 enum MessageType {

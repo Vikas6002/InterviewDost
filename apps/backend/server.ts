@@ -77,6 +77,7 @@ async function withDb<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 const app = express();
+app.set("trust proxy", 1);
 const cspDirectives = {
   defaultSrc: ["'self'"],
   scriptSrc: ["'self'", "'unsafe-inline'"],
@@ -221,7 +222,7 @@ authRouter.get("/github", (_req, res) => {
   const url = `https://github.com/login/oauth/authorize?client_id=${GITHUB_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=read:user&state=${state}`;
   res.cookie("oauth_state", state, {
     httpOnly: true,
-    sameSite: "lax",
+    sameSite: NODE_ENV === "production" ? "none" : "lax",
     maxAge: 10 * 60 * 1000,
     secure: NODE_ENV === "production",
   });
@@ -385,6 +386,14 @@ server.on("upgrade", async (request, socket, head) => {
   if (url.pathname === "/api/v1/stt") {
     wss.handleUpgrade(request, socket, head, (clientWs) => {
       clientWs.on("error", () => {});
+      const sttHeartbeat = setInterval(() => {
+        if (clientWs.readyState === WsWebSocket.OPEN) {
+          clientWs.ping();
+        } else {
+          clearInterval(sttHeartbeat);
+        }
+      }, 25000);
+
       const dgWs = new WsWebSocket(
         "wss://api.deepgram.com/v1/listen?model=nova-2&smart_format=true",
         {
@@ -399,12 +408,14 @@ server.on("upgrade", async (request, socket, head) => {
       });
       dgWs.on("error", () => {});
       dgWs.on("close", () => {
+        clearInterval(sttHeartbeat);
         if (clientWs.readyState === WsWebSocket.OPEN) clientWs.close();
       });
       clientWs.on("message", (data) => {
         if (dgWs.readyState === WsWebSocket.OPEN) dgWs.send(data);
       });
       clientWs.on("close", () => {
+        clearInterval(sttHeartbeat);
         if (dgWs.readyState === WsWebSocket.OPEN) dgWs.close();
       });
     });
@@ -415,6 +426,15 @@ server.on("upgrade", async (request, socket, head) => {
 });
 
 wss.on("connection", async (ws) => {
+  const wsHeartbeat = setInterval(() => {
+    if (ws.readyState === WsWebSocket.OPEN) {
+      ws.ping();
+    } else {
+      clearInterval(wsHeartbeat);
+    }
+  }, 25000);
+  ws.on("close", () => clearInterval(wsHeartbeat));
+
   const interviewId = (ws as any).interviewId as string;
   const userId = (ws as any).userId as string;
 
@@ -582,9 +602,20 @@ async function calculateResult(
 }
 
 async function scrapeGithub(username: string) {
-  const res = await fetch(`https://api.github.com/users/${username}/repos`);
+  const headers: Record<string, string> = {
+    "User-Agent": "InterviewDost-App",
+    Accept: "application/vnd.github.v3+json",
+  };
+  if (GITHUB_CLIENT_ID && GITHUB_CLIENT_SECRET) {
+    headers["Authorization"] = `Basic ${Buffer.from(`${GITHUB_CLIENT_ID}:${GITHUB_CLIENT_SECRET}`).toString("base64")}`;
+  }
+  const res = await fetch(
+    `https://api.github.com/users/${username}/repos?sort=updated&per_page=15`,
+    { headers },
+  );
   if (!res.ok) return [];
   const data: any = await res.json();
+  if (!Array.isArray(data)) return [];
   return data.map((x: any) => ({
     description: x.description,
     name: x.name,

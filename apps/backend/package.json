@@ -29,6 +29,8 @@
     "ws": "^8.21.0"
   },
   "scripts": {
+    "start": "bun server.ts",
+    "build": "bunx prisma generate",
     "dev": "bun --hot server.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",

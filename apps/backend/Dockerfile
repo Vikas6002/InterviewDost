@@ -2,9 +2,9 @@ FROM oven/bun:1.3 AS build
 
 WORKDIR /app
 
-COPY package.json bun.lock ./
+COPY package.json ./
 COPY prisma/ prisma/
-RUN bun install --frozen-lockfile
+RUN bun install
 RUN bunx prisma generate
 
 FROM oven/bun:1.3 AS runner

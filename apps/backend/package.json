@@ -33,7 +33,6 @@
     "build": "bunx prisma generate",
     "dev": "bun --hot server.ts",
     "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate dev",
-    "postinstall": "prisma generate"
+    "db:migrate": "prisma migrate dev"
   }
 }

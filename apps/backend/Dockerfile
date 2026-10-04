@@ -11,16 +11,11 @@ FROM oven/bun:1.3 AS runner
 
 WORKDIR /app
 
-RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 --ingroup nodejs appuser
-
 COPY --from=build /app/node_modules node_modules
 COPY --from=build /app/generated generated
 COPY . .
 
-RUN chown -R appuser:nodejs /app
-
-USER appuser
+USER bun
 
 EXPOSE 3001
 

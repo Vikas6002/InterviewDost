@@ -31,9 +31,12 @@ const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY!;
 const DATABASE_URL = process.env.DATABASE_URL!;
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID!;
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET!;
-const FRONTEND_URL =
-  process.env.FRONTEND_URL ?? "https://frontend-bice-one-8o0ryl9h02.vercel.app";
-const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:3001";
+const FRONTEND_URL = (
+  process.env.FRONTEND_URL ?? "http://localhost:3000"
+).replace(/\/+$/, "");
+const BACKEND_URL = (
+  process.env.BACKEND_URL ?? "http://localhost:3001"
+).replace(/\/+$/, "");
 const NODE_ENV = process.env.NODE_ENV ?? "development";
 const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID ?? "";
 const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET ?? "";
